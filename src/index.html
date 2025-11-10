@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Species ID — Drop an image</title>
+  <style>
+    body { font-family: system-ui, Arial; max-width: 900px; margin: 24px auto; }
+    #drop { border: 2px dashed #888; padding: 32px; text-align: center; border-radius: 8px; cursor: pointer; }
+    #preview { margin-top: 12px; max-width: 100%; height: auto; display: block; }
+    #results { margin-top: 12px; }
+    .suggest { padding: 8px; border-bottom: 1px solid #eee; }
+  </style>
+</head>
+<body>
+  <h1>Species Identifier</h1>
+  <div id="drop">Drop an image here or <input id="fileInput" type="file" accept="image/*" /></div>
+  <img id="preview" src="" alt="" hidden />
+  <div id="status"></div>
+  <div id="results"></div>
+
+<script>
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('fileInput');
+const preview = document.getElementById('preview');
+const status = document.getElementById('status');
+const results = document.getElementById('results');
+
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.style.borderColor = '#444'; });
+drop.addEventListener('dragleave', e => { e.preventDefault(); drop.style.borderColor = '#888'; });
+drop.addEventListener('drop', e => { e.preventDefault(); drop.style.borderColor = '#888'; handleFiles(e.dataTransfer.files); });
+fileInput.addEventListener('change', e => handleFiles(e.target.files));
+
+async function handleFiles(files) {
+  if (!files || files.length === 0) return;
+  const file = files[0];
+  preview.src = URL.createObjectURL(file); preview.hidden = false;
+  status.textContent = "Uploading & identifying...";
+  results.innerHTML = "";
+
+  try {
+    const form = new FormData();
+    form.append('image', file);
+
+    const resp = await fetch('http://localhost:8000/identify', {
+      method: 'POST',
+      body: form
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(()=>({error:'unknown'}));
+      status.textContent = "Error: " + (err?.error || resp.statusText);
+      return;
+    }
+
+    const data = await resp.json();
+    status.textContent = `Model: ${data.model}`;
+    if (!data.suggestions || data.suggestions.length === 0) { results.innerHTML = "<i>No suggestions</i>"; return; }
+
+    results.innerHTML = data.suggestions.map(s => `
+      <div class="suggest">
+        <strong>${s.label}</strong> — ${(s.score*100).toFixed(1)}%
+      </div>`).join('');
+  } catch (err) {
+    console.error(err);
+    status.textContent = "Network error: " + err.message;
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+.env
+./backend/node_modules
+./backend/.env
+venv
+node_modules
+models
