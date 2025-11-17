@@ -5,6 +5,7 @@ import axios from "axios";
 import { v2 as cloudinary } from "cloudinary";
 import { PassThrough } from "stream";
 import dotenv from "dotenv";
+import FormData from "form-data";
 
 dotenv.config();
 
@@ -76,6 +77,9 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     if (!clientInfo || !clientInfo.clientId) {
       return res.status(404).json({ error: "Client not found for this trapId" });
     }
+    else{
+      console.log('Client Info:', clientInfo);
+    }
 
     // Step 2: Upload image to Cloudinary
     const clResult = await uploadToCloudinary(
@@ -93,7 +97,8 @@ app.post("/upload", upload.single("image"), async (req, res) => {
 
     // Step 3: Send to BioCLIP AI server
     const form = new FormData();
-    form.append("file", new Blob([file.buffer]), file.originalname);
+    form.append("file", file.buffer, file.originalname);
+    form.append("client_id", clientInfo.clientId);
     form.append("run_sam", "false");
     form.append("detector_threshold", "0.30");
     form.append("topk_species", "3");
@@ -102,6 +107,8 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       headers: form.getHeaders(),
       timeout: 90_000,
     });
+
+    console.log('AI Response:', aiResponse.data);
 
     const { detections = [], warnings = [] } = aiResponse.data;
 
@@ -146,10 +153,14 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       warnings,
     };
 
+    console.log('Final Payload:', finalPayload);
+
     // Step 5: Send to BFF for storage
     await axios.post(process.env.BFF_STORE_URL, finalPayload, {
       timeout: 15_000,
     });
+
+    console.log('Data successfully sent to BFF for storage.');
 
     // Step 6: Respond to camera trap
     res.json({

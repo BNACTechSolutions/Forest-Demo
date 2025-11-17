@@ -10,6 +10,8 @@ from PIL import Image
 import numpy as np
 import torch
 import open_clip
+import httpx
+import os
 
 # Optional model imports (install if you use those features)
 # pip install ultralytics segment-anything
@@ -35,32 +37,17 @@ app.add_middleware(
 )
 
 # -------------------------
-# Config / Candidate labels
+# Config / Backend URL
 # -------------------------
-candidate_species = [
-    # Mammals
-    "Barking Deer", "Bengal Tiger", "Common Langur", "Four-Horned Antelope",
-    "Indian Bison", "Indian Elephant", "Indian Giant Squirrel", "Indian Leopard",
-    "Jungle Cat", "Sambar Deer", "Wild Boar", "Sloth Bear", "Indian Wolf",
-    "Indian Fox", "Dhole", "Nilgai", "Spotted Deer", "Mouse Deer", "Blackbuck",
-    "Rhesus Macaque", "Bonnet Macaque", "Lion-Tailed Macaque", "Chimpanzee",
-    "Orangutan", "Gaur",
-    # Birds
-    "Hill Myna", "Hornbill", "Peacock", "Great Indian Bustard", "Forest Owl",
-    "Kingfisher", "Parakeet", "Sandpiper", "Cattle Egret", "Indian Roller", "Shikra",
-    # Reptiles
-    "Saltwater Crocodile", "Mugger Crocodile", "Gharial", "King Cobra",
-    "Indian Python", "Water Monitor", "Indian Cobra", "Russell's Viper",
-    "Common Krait", "Saw-Scaled Viper", "Rat Snake", "Wolf Snake", "Barkudia Insularis",
-    # Amphibians
-    "Asian Common Toad", "Painted Globular Frog", "Indian Bullfrog",
-    "Indian Skittering Frog", "Purple Frog",
-    # Fish
-    "Wallago Attu", "Labeo Rohita", "Catla Catla", "Cirrhinus mrigala",
-    "Labeo calbasu", "Snakehead Fish", "Catfish", "Mahseer", "Freshwater Eel",
-    # Other Notable Animals
-    "Olive Ridley Sea Turtle", "Irrawaddy Dolphin"
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:3000")
+print(f"Backend URL: {BACKEND_URL}")
+
+# Default fallback list (in case backend is unavailable)
+DEFAULT_SPECIES = [
+    "Dog", "Cat", "Cow"
 ]
+
+candidate_species = DEFAULT_SPECIES
 
 # -------------------------
 # Load BioCLIP model
@@ -113,6 +100,28 @@ else:
 # -------------------------
 # Helpers
 # -------------------------
+async def fetch_client_species(client_id: str) -> List[str]:
+    """
+    Fetch supported species for a client from the backend.
+    Falls back to DEFAULT_SPECIES if backend is unavailable.
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(
+                f"{BACKEND_URL}/api/species-of-interest/supported"
+            )
+            if response.status_code == 200:
+                data = response.json()
+                species_list = [s.get("specieName") for s in data.get("supportedSpecies", [])]
+                if species_list:
+                    print(f"Loaded {len(species_list)} species from backend for client {client_id}")
+                    return species_list
+    except Exception as e:
+        print(f"Error fetching species from backend: {e}")
+    
+    print(f"Falling back to default species list")
+    return DEFAULT_SPECIES
+
 def pil_from_bytes(b: bytes) -> Image.Image:
     img = Image.open(io.BytesIO(b)).convert("RGB")
     return img
@@ -137,7 +146,8 @@ def mask_to_base64_png(mask: np.ndarray) -> str:
 
 def classify_crop_bioclip(pil_crop: Image.Image, topk: int = 1):
     """
-    Classify crop with BioCLIP. Returns list of (species, confidence) of length topk.
+    Classify crop with BioCLIP using default candidate_species.
+    Returns list of (species, confidence) of length topk.
     """
     img_t = preprocess_val(pil_crop).unsqueeze(0).to(device)
     with torch.no_grad():
@@ -150,6 +160,24 @@ def classify_crop_bioclip(pil_crop: Image.Image, topk: int = 1):
     results = []
     for score, idx in zip(topv.tolist(), topi.tolist()):
         results.append((candidate_species[idx], float(score)))
+    return results
+
+def classify_crop_bioclip_with_tokens(pil_crop: Image.Image, species_list: List[str], local_text_tokens, topk: int = 1):
+    """
+    Classify crop with BioCLIP using custom species_list and text_tokens.
+    Returns list of (species, confidence) of length topk.
+    """
+    img_t = preprocess_val(pil_crop).unsqueeze(0).to(device)
+    with torch.no_grad():
+        image_features = model.encode_image(img_t)
+        text_features = model.encode_text(local_text_tokens)
+        image_features /= image_features.norm(dim=-1, keepdim=True)
+        text_features /= text_features.norm(dim=-1, keepdim=True)
+        logits = (100.0 * image_features @ text_features.T).softmax(dim=-1)  # probabilities
+    topv, topi = logits[0].topk(topk)
+    results = []
+    for score, idx in zip(topv.tolist(), topi.tolist()):
+        results.append((species_list[idx], float(score)))
     return results
 
 # -------------------------
@@ -174,6 +202,7 @@ class IdentifyResponse(BaseModel):
 @app.post("/identify", response_model=IdentifyResponse)
 async def identify(
     file: UploadFile = File(...),
+    client_id: str = Form(None),           # optional: fetch species for specific client
     run_sam: bool = Form(False),           # whether to run SAM masks (can be slow)
     detector_threshold: float = Form(0.35),# min conf for detections
     topk_species: int = Form(1),           # top-k species to return per crop
@@ -181,10 +210,19 @@ async def identify(
     """
     Upload an image (multipart form-data, field name 'file').
     Optional form fields:
+      - client_id (str): client ID to fetch their supported species from backend
       - run_sam (bool): whether to run SAM mask generator for precise masks.
       - detector_threshold (float): minimum detector confidence to keep a detection (0-1)
       - topk_species (int): return top-k species per animal crop
     """
+    # Fetch species list (either client-specific or default)
+    species_list = candidate_species
+    if client_id:
+        species_list = await fetch_client_species(client_id)
+    
+    # Update text tokens for BioCLIP with the species list
+    local_text_tokens = tokenizer(species_list).to(device)
+    
     img_bytes = await file.read()
     pil_img = pil_from_bytes(img_bytes)
     img_w, img_h = pil_img.size
@@ -196,7 +234,7 @@ async def identify(
     if DETECTOR is None:
         warnings.append("Object detector not available. Falling back to whole-image classification.")
         # classify whole image with BioCLIP
-        species_preds = classify_crop_bioclip(pil_img, topk=topk_species)
+        species_preds = classify_crop_bioclip_with_tokens(pil_img, species_list, local_text_tokens, topk=topk_species)
         for species, species_conf in species_preds:
             det = Detection(
                 bbox=[0.0, 0.0, float(img_w), float(img_h)],
@@ -269,7 +307,7 @@ async def identify(
     # If no boxes found, optionally run whole-image classification to attempt detection
     if not boxes:
         warnings.append("No detections above threshold. Running whole-image classification fallback.")
-        species_preds = classify_crop_bioclip(pil_img, topk=topk_species)
+        species_preds = classify_crop_bioclip_with_tokens(pil_img, species_list, local_text_tokens, topk=topk_species)
         for species, species_conf in species_preds:
             det = Detection(
                 bbox=[0.0, 0.0, float(img_w), float(img_h)],
@@ -346,7 +384,7 @@ async def identify(
 
         # For animals (or unknown) run BioCLIP classification
         try:
-            preds = classify_crop_bioclip(crop, topk=topk_species)
+            preds = classify_crop_bioclip_with_tokens(crop, species_list, local_text_tokens, topk=topk_species)
             # pick top1 for species fields, but include extra if topk>1
             if preds:
                 species, species_conf = preds[0]
