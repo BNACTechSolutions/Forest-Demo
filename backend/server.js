@@ -6,6 +6,7 @@ import { v2 as cloudinary } from "cloudinary";
 import { PassThrough } from "stream";
 import dotenv from "dotenv";
 import FormData from "form-data";
+import cors from "cors";
 
 dotenv.config();
 
@@ -23,6 +24,7 @@ cloudinary.config({
 // ====================
 const app = express();
 const upload = multer(); // memory buffer only
+app.use(cors());
 
 // ====================
 // Helper: Upload buffer to Cloudinary
@@ -58,7 +60,7 @@ const uploadToCloudinary = (buffer, originalName, trapId) => {
 // ====================
 app.post("/upload", upload.single("image"), async (req, res) => {
   try {
-    const { trapId, captureTime, gps, temperature } = req.body;
+    const { trapId, captureTime } = req.body;
     const file = req.file;
 
     if (!trapId || !captureTime || !file) {
@@ -147,9 +149,6 @@ app.post("/upload", upload.single("image"), async (req, res) => {
         topk: det.extra?.topk || null,
       })),
 
-      // Extra metadata
-      gps: gps || null,
-      temperature: temperature || null,
       warnings,
     };
 

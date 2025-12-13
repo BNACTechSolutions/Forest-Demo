@@ -1,8 +1,8 @@
-# bioclip_server_v2.py
+# bioclip_server_improved.py
 import io
 import base64
 import json
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -13,8 +13,7 @@ import open_clip
 import httpx
 import os
 
-# Optional model imports (install if you use those features)
-# pip install ultralytics segment-anything
+# Optional model imports
 try:
     from ultralytics import YOLO
     YOLO_AVAILABLE = True
@@ -22,7 +21,6 @@ except Exception:
     YOLO_AVAILABLE = False
 
 try:
-    # segment-anything imports
     from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
     SAM_AVAILABLE = True
 except Exception:
@@ -42,9 +40,36 @@ app.add_middleware(
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:3000")
 print(f"Backend URL: {BACKEND_URL}")
 
-# Default fallback list (in case backend is unavailable)
-DEFAULT_SPECIES = [
-    "Dog", "Cat", "Cow"
+# Default fallback list
+DEFAULT_SPECIES = ["Dog", "Cat", "Cow"]
+
+# EXPANDED species list for BioCLIP classification
+# This ensures BioCLIP can distinguish between similar animals
+BIOCLIP_EXTENDED_SPECIES = [
+    # Canines
+    "Dog", "Wolf", "Fox", "Coyote", "Jackal", "Dingo",
+    # Felines
+    "Cat", "Lion", "Tiger", "Leopard", "Cheetah", "Jaguar", "Panther", "Lynx", "Puma", "Cougar",
+    # Bovines
+    "Cow", "Bull", "Buffalo", "Bison", "Ox", "Yak", "Water Buffalo",
+    # Equines
+    "Horse", "Zebra", "Donkey", "Mule",
+    # Primates (NOT humans)
+    "Monkey", "Chimpanzee", "Gorilla", "Orangutan", "Baboon", "Lemur", "Gibbon", "Macaque",
+    # Bears
+    "Bear", "Grizzly Bear", "Polar Bear", "Black Bear", "Panda",
+    # Birds
+    "Bird", "Eagle", "Hawk", "Owl", "Parrot", "Crow", "Pigeon", "Sparrow", "Penguin", "Flamingo",
+    # Reptiles
+    "Snake", "Lizard", "Crocodile", "Alligator", "Turtle", "Tortoise", "Iguana",
+    # Rodents
+    "Mouse", "Rat", "Squirrel", "Hamster", "Guinea Pig", "Rabbit", "Beaver",
+    # Marine
+    "Dolphin", "Whale", "Seal", "Sea Lion", "Otter",
+    # Farm/Domestic
+    "Sheep", "Goat", "Pig", "Chicken", "Duck", "Goose", "Turkey",
+    # Wild
+    "Elephant", "Giraffe", "Rhinoceros", "Hippopotamus", "Kangaroo", "Deer", "Moose", "Elk",
 ]
 
 candidate_species = DEFAULT_SPECIES
@@ -55,23 +80,21 @@ candidate_species = DEFAULT_SPECIES
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("Device:", device)
 
-# You must have open_clip & the model available; uses same call you had.
 model, preprocess_train, preprocess_val = open_clip.create_model_and_transforms('hf-hub:imageomics/bioclip-2')
 tokenizer = open_clip.get_tokenizer('hf-hub:imageomics/bioclip-2')
 model = model.to(device)
 model.eval()
 
-text_tokens = tokenizer(candidate_species).to(device)
+# Tokenize the EXTENDED species list for BioCLIP
+bioclip_text_tokens = tokenizer(BIOCLIP_EXTENDED_SPECIES).to(device)
 
 # -------------------------
 # Optional: YOLO object detector
 # -------------------------
 DETECTOR = None
 if YOLO_AVAILABLE:
-    # choose a YOLOv8 model file or string. 'yolov8n.pt' is small and fast.
-    # For best accuracy in wildlife + person detection use a larger model or custom weights.
     try:
-        DETECTOR = YOLO("yolov8n.pt")  # fallback to model name (will download if needed)
+        DETECTOR = YOLO("yolov8n.pt")
         print("YOLO detector loaded.")
     except Exception as e:
         print("Failed to load YOLO model:", e)
@@ -85,7 +108,6 @@ else:
 SAM = None
 SAM_MASK_GENERATOR = None
 if SAM_AVAILABLE:
-    # You need to supply a SAM checkpoint or select a model from registry supported in your segment-anything installation.
     try:
         sam_checkpoint = "models/sam_vit_b_01ec64.pth"
         sam_model_type = "vit_b"
@@ -93,18 +115,15 @@ if SAM_AVAILABLE:
         SAM_MASK_GENERATOR = SamAutomaticMaskGenerator(SAM)
         print("SAM loaded.")
     except Exception as e:
-        print("SAM not loaded. Provide the checkpoint and confirm segment-anything installation.", e)
+        print("SAM not loaded.", e)
 else:
-    print("segment-anything not available. Install with: pip install git+https://github.com/facebookresearch/segment-anything.git")
+    print("segment-anything not available.")
 
 # -------------------------
 # Helpers
 # -------------------------
 async def fetch_client_species(client_id: str) -> List[str]:
-    """
-    Fetch supported species for a client from the backend.
-    Falls back to DEFAULT_SPECIES if backend is unavailable.
-    """
+    """Fetch supported species for a client from the backend."""
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             response = await client.get(
@@ -127,7 +146,6 @@ def pil_from_bytes(b: bytes) -> Image.Image:
     return img
 
 def crop_pil(img: Image.Image, box: List[float]) -> Image.Image:
-    # box: [x1, y1, x2, y2]
     x1, y1, x2, y2 = [int(round(x)) for x in box]
     x1 = max(x1, 0)
     y1 = max(y1, 0)
@@ -136,61 +154,79 @@ def crop_pil(img: Image.Image, box: List[float]) -> Image.Image:
     return img.crop((x1, y1, x2, y2))
 
 def mask_to_base64_png(mask: np.ndarray) -> str:
-    """
-    mask: boolean or 0/1 2D numpy array. Returns base64-encoded PNG.
-    """
+    """Convert mask to base64-encoded PNG."""
     mask_img = Image.fromarray((mask.astype(np.uint8) * 255))
     buf = io.BytesIO()
     mask_img.save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("utf-8")
 
-def classify_crop_bioclip(pil_crop: Image.Image, topk: int = 1):
+def classify_with_bioclip(pil_crop: Image.Image, confidence_threshold: float = 0.5, topk: int = 3) -> Optional[Tuple[str, float, List[Tuple[str, float]]]]:
     """
-    Classify crop with BioCLIP using default candidate_species.
-    Returns list of (species, confidence) of length topk.
+    Classify crop with BioCLIP using EXTENDED species list.
+    Returns (species, confidence, top_k_predictions) with highest confidence, or None if below threshold.
     """
     img_t = preprocess_val(pil_crop).unsqueeze(0).to(device)
+    
     with torch.no_grad():
         image_features = model.encode_image(img_t)
-        text_features = model.encode_text(text_tokens)
+        text_features = model.encode_text(bioclip_text_tokens)
         image_features /= image_features.norm(dim=-1, keepdim=True)
         text_features /= text_features.norm(dim=-1, keepdim=True)
-        logits = (100.0 * image_features @ text_features.T).softmax(dim=-1)  # probabilities
-    topv, topi = logits[0].topk(topk)
-    results = []
-    for score, idx in zip(topv.tolist(), topi.tolist()):
-        results.append((candidate_species[idx], float(score)))
-    return results
+        logits = (100.0 * image_features @ text_features.T).softmax(dim=-1)
+    
+    # Get top-k predictions
+    topk_vals, topk_idxs = logits[0].topk(min(topk, len(BIOCLIP_EXTENDED_SPECIES)))
+    
+    max_conf = float(topk_vals[0])
+    max_idx = int(topk_idxs[0])
+    
+    if max_conf < confidence_threshold:
+        return None
+    
+    predicted_species = BIOCLIP_EXTENDED_SPECIES[max_idx]
+    
+    # Get all top-k for debugging
+    all_topk = [(BIOCLIP_EXTENDED_SPECIES[int(idx)], float(val)) for idx, val in zip(topk_idxs, topk_vals)]
+    
+    return predicted_species, max_conf, all_topk
 
-def classify_crop_bioclip_with_tokens(pil_crop: Image.Image, species_list: List[str], local_text_tokens, topk: int = 1):
+def is_allowed_species(predicted_species: str, allowed_list: List[str]) -> bool:
     """
-    Classify crop with BioCLIP using custom species_list and text_tokens.
-    Returns list of (species, confidence) of length topk.
+    Check if predicted species is in the allowed list (case-insensitive exact match).
     """
-    img_t = preprocess_val(pil_crop).unsqueeze(0).to(device)
-    with torch.no_grad():
-        image_features = model.encode_image(img_t)
-        text_features = model.encode_text(local_text_tokens)
-        image_features /= image_features.norm(dim=-1, keepdim=True)
-        text_features /= text_features.norm(dim=-1, keepdim=True)
-        logits = (100.0 * image_features @ text_features.T).softmax(dim=-1)  # probabilities
-    topv, topi = logits[0].topk(topk)
-    results = []
-    for score, idx in zip(topv.tolist(), topi.tolist()):
-        results.append((species_list[idx], float(score)))
-    return results
+    predicted_lower = predicted_species.lower()
+    for allowed in allowed_list:
+        if allowed.lower() == predicted_lower:
+            return True
+    return False
+
+def is_animal_class(class_name: str) -> bool:
+    """Check if YOLO class name represents an animal we care about."""
+    class_lower = class_name.lower()
+    
+    # Person is not an animal
+    if "person" in class_lower or "human" in class_lower:
+        return False
+    
+    # Common COCO animal classes
+    animal_keywords = [
+        "dog", "cat", "horse", "sheep", "cow", "elephant", "bear", 
+        "zebra", "giraffe", "deer", "bird", "snake", "lizard"
+    ]
+    
+    return any(keyword in class_lower for keyword in animal_keywords)
 
 # -------------------------
 # Response models
 # -------------------------
 class Detection(BaseModel):
-    bbox: List[float]              # [x1,y1,x2,y2] in image coords
-    label: str                     # "person" or "animal"
+    bbox: List[float]
+    label: str
     detector_confidence: float
-    species: Optional[str] = None  # filled for animals
+    species: Optional[str] = None
     species_confidence: Optional[float] = None
-    mask_png_base64: Optional[str] = None  # data URL
-    extra: Optional[dict] = None
+    mask_png_base64: Optional[str] = None
+    bioclip_top3: Optional[List[dict]] = None  # Top 3 BioCLIP predictions for debugging
 
 class IdentifyResponse(BaseModel):
     detections: List[Detection]
@@ -202,26 +238,26 @@ class IdentifyResponse(BaseModel):
 @app.post("/identify", response_model=IdentifyResponse)
 async def identify(
     file: UploadFile = File(...),
-    client_id: str = Form(None),           # optional: fetch species for specific client
-    run_sam: bool = Form(False),           # whether to run SAM masks (can be slow)
-    detector_threshold: float = Form(0.35),# min conf for detections
-    topk_species: int = Form(1),           # top-k species to return per crop
+    client_id: str = Form(None),
+    run_sam: bool = Form(False),
+    detector_threshold: float = Form(0.35),
+    species_confidence_threshold: float = Form(0.3),  # LOWERED from 0.5 to 0.3
+    topk_species: int = Form(5),
 ):
     """
-    Upload an image (multipart form-data, field name 'file').
-    Optional form fields:
-      - client_id (str): client ID to fetch their supported species from backend
-      - run_sam (bool): whether to run SAM mask generator for precise masks.
-      - detector_threshold (float): minimum detector confidence to keep a detection (0-1)
-      - topk_species (int): return top-k species per animal crop
-    """
-    # Fetch species list (either client-specific or default)
-    species_list = candidate_species
-    if client_id:
-        species_list = await fetch_client_species(client_id)
+    Upload an image for identification.
     
-    # Update text tokens for BioCLIP with the species list
-    local_text_tokens = tokenizer(species_list).to(device)
+    Parameters:
+    - file: Image file
+    - client_id: Client ID to fetch their supported species
+    - run_sam: Whether to run SAM mask generator
+    - detector_threshold: Minimum YOLO confidence (0-1, default 0.35)
+    - species_confidence_threshold: Minimum BioCLIP confidence (0-1, default 0.3)
+    """
+    # Fetch client's allowed species list
+    allowed_species_list = candidate_species
+    if client_id:
+        allowed_species_list = await fetch_client_species(client_id)
     
     img_bytes = await file.read()
     pil_img = pil_from_bytes(img_bytes)
@@ -230,147 +266,90 @@ async def identify(
     warnings = []
     detections_out: List[Detection] = []
 
-    # If no detector available, fallback: run whole-image classification (single prediction)
+    # If no detector available, return empty
     if DETECTOR is None:
-        warnings.append("Object detector not available. Falling back to whole-image classification.")
-        # classify whole image with BioCLIP
-        species_preds = classify_crop_bioclip_with_tokens(pil_img, species_list, local_text_tokens, topk=topk_species)
-        for species, species_conf in species_preds:
-            det = Detection(
-                bbox=[0.0, 0.0, float(img_w), float(img_h)],
-                label="animal",
-                detector_confidence=1.0,
-                species=species,
-                species_confidence=species_conf,
-                mask_png_base64=None
-            )
-            detections_out.append(det)
-        return IdentifyResponse(detections=detections_out, warnings=warnings)
+        warnings.append("Object detector not available. Cannot process image.")
+        return IdentifyResponse(detections=[], warnings=warnings)
 
-    # Run detector
-    # ultralytics YOLO returns a Results object. We pass numpy array or PIL.
-    results = DETECTOR(pil_img)  # default size handling done by yolov8
-    # results may be a list; take first
+    # Run YOLO detector
+    results = DETECTOR(pil_img)
     results0 = results[0]
 
-    # results0.boxes.xyxy, results0.boxes.conf, results0.boxes.cls
-    boxes = []
+    # Parse YOLO results
     try:
-        xyxy = results0.boxes.xyxy.cpu().numpy()  # shape (N,4)
+        xyxy = results0.boxes.xyxy.cpu().numpy()
         confs = results0.boxes.conf.cpu().numpy()
         cls_ids = results0.boxes.cls.cpu().numpy().astype(int)
     except Exception:
-        # Fallback: sometimes API differs, try results0.boxes.data
         try:
-            data = results0.boxes.data.cpu().numpy()  # [x1,y1,x2,y2,conf,cls]
+            data = results0.boxes.data.cpu().numpy()
             xyxy = data[:, :4]
             confs = data[:, 4]
             cls_ids = data[:, 5].astype(int)
         except Exception as e:
             warnings.append(f"Unable to parse detector output: {e}")
-            xyxy, confs, cls_ids = np.zeros((0,4)), np.array([]), np.array([])
+            return IdentifyResponse(detections=[], warnings=warnings)
 
-    # ultralytics uses COCO class ids; id for person is 0 normally. We'll map COCO animal classes -> "animal"
-    COCO_PERSON_CLASS_ID = 0  # typical for COCO
-    # A simple set of COCO animal class ids (common ones). You can expand or use class names from model.names
-    COCO_ANIMAL_CLASS_IDS = set([
-        15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28  # cat/dog/horse/sheep/cow/elephant/bear/zebra/giraffe etc
-    ])
-    # If the model has .names use that to detect 'person' and animals by name matching
-    model_names = getattr(DETECTOR, "model", None)
-    # Better: use results0.names if provided
     names_map = getattr(results0, "names", None)
 
+    # Filter valid detections (persons and animals only)
+    valid_boxes = []
     for box, conf, cls_id in zip(xyxy, confs, cls_ids):
         if conf < detector_threshold:
             continue
-        # Determine if label is person or animal
-        label = "unknown"
+        
+        # Get class name
         if names_map is not None:
-            name = names_map.get(int(cls_id), str(cls_id)).lower()
-            if "person" in name or "human" in name:
-                label = "person"
-            elif any(k in name for k in ["dog", "cat", "horse", "sheep", "cow", "elephant", "bear", "zebra", "giraffe", "deer", "tiger", "leopard", "monkey", "ape", "bird", "snake", "crocodile", "lizard", "fish", "turtle"]):
-                label = "animal"
-            else:
-                label = name
+            class_name = names_map.get(int(cls_id), str(cls_id))
         else:
-            if int(cls_id) == COCO_PERSON_CLASS_ID:
-                label = "person"
-            elif int(cls_id) in COCO_ANIMAL_CLASS_IDS:
-                label = "animal"
-            else:
-                label = f"class_{int(cls_id)}"
+            class_name = f"class_{int(cls_id)}"
+        
+        class_lower = class_name.lower()
+        
+        # Determine label
+        if "person" in class_lower or "human" in class_lower:
+            label = "person"
+            valid_boxes.append((box.tolist(), float(conf), label, class_name))
+        elif is_animal_class(class_name):
+            label = "animal"
+            valid_boxes.append((box.tolist(), float(conf), label, class_name))
+        else:
+            # Not a person or animal - ignore (suitcase, chair, etc.)
+            continue
 
-        boxes.append((box.tolist(), float(conf), label))
+    # If no valid detections, return empty
+    if not valid_boxes:
+        warnings.append("No persons or animals detected in image.")
+        return IdentifyResponse(detections=[], warnings=warnings)
 
-    # If no boxes found, optionally run whole-image classification to attempt detection
-    if not boxes:
-        warnings.append("No detections above threshold. Running whole-image classification fallback.")
-        species_preds = classify_crop_bioclip_with_tokens(pil_img, species_list, local_text_tokens, topk=topk_species)
-        for species, species_conf in species_preds:
-            det = Detection(
-                bbox=[0.0, 0.0, float(img_w), float(img_h)],
-                label="animal",
-                detector_confidence=1.0,
-                species=species,
-                species_confidence=species_conf,
-                mask_png_base64=None
-            )
-            detections_out.append(det)
-        return IdentifyResponse(detections=detections_out, warnings=warnings)
-
-    # Optionally compute masks using SAM for each detected box
+    # Optionally compute SAM masks
     sam_masks_by_box = {}
     if run_sam and SAM_MASK_GENERATOR is not None:
-        # SAM expects an image as numpy array HWC, RGB
         arr = np.array(pil_img)
         all_masks = SAM_MASK_GENERATOR.generate(arr)
-        # each mask has 'segmentation' (boolean mask) and 'bbox' etc
-        # For simplicity, for each detector box we'll find the mask with largest IoU / overlap
-        def iou_mask_box(mask, box):
-            # compute IoU between boolean mask bbox and box
-            ys, xs = np.where(mask)
-            if len(xs) == 0:
-                return 0.0
-            mx1, my1 = xs.min(), ys.min()
-            mx2, my2 = xs.max(), ys.max()
-            ix1 = max(mx1, int(round(box[0])))
-            iy1 = max(my1, int(round(box[1])))
-            ix2 = min(mx2, int(round(box[2])))
-            iy2 = min(my2, int(round(box[3])))
-            if ix2 <= ix1 or iy2 <= iy1:
-                return 0.0
-            return 1.0  # coarse: since selecting by overlap we can be simple
-
-        for i, (box, conf, label) in enumerate(boxes):
-            # find mask with maximum overlap with box
+        
+        for i, (box, conf, label, class_name) in enumerate(valid_boxes):
             best_mask = None
-            best_score = -1.0
             for m in all_masks:
                 mask_bool = m["segmentation"]
-                # crude overlap measure: bounding boxes overlap
-                # we just select first mask whose bbox overlaps
-                mbbox = m["bbox"]  # [x, y, w, h]
+                mbbox = m["bbox"]
                 mbx1, mby1, mbw, mbh = mbbox
                 mbx2 = mbx1 + mbw
                 mby2 = mby1 + mbh
-                # overlap check
+                
                 if not (mbx2 < box[0] or mbx1 > box[2] or mby2 < box[1] or mby1 > box[3]):
                     best_mask = mask_bool
                     break
+            
             if best_mask is not None:
                 sam_masks_by_box[i] = best_mask
 
-    # For each detected box, crop and classify if it's an animal
-    for i, (box, det_conf, label) in enumerate(boxes):
+    # Process each detection
+    for i, (box, det_conf, label, class_name) in enumerate(valid_boxes):
         x1, y1, x2, y2 = box
-        crop = crop_pil(pil_img, box)
-        species = None
-        species_conf = None
-
-        if label == "person" or "person" in str(label).lower():
-            # for humans we won't run BioCLIP (not in candidate list), but mark them
+        
+        # For persons, just add the detection
+        if label == "person":
             det = Detection(
                 bbox=[x1, y1, x2, y2],
                 label="person",
@@ -381,27 +360,55 @@ async def identify(
             )
             detections_out.append(det)
             continue
-
-        # For animals (or unknown) run BioCLIP classification
+        
+        # For animals, run BioCLIP classification
+        crop = crop_pil(pil_img, box)
+        
         try:
-            preds = classify_crop_bioclip_with_tokens(crop, species_list, local_text_tokens, topk=topk_species)
-            # pick top1 for species fields, but include extra if topk>1
-            if preds:
-                species, species_conf = preds[0]
-            extra = {"topk": [{"species": s, "confidence": c} for s, c in preds]} if len(preds) > 1 else None
+            result = classify_with_bioclip(crop, confidence_threshold=species_confidence_threshold, topk=5)
+            
+            if result is not None:
+                predicted_species, species_conf, all_topk = result
+                
+                # Format top-k for response
+                topk_formatted = [{"species": s, "confidence": round(c, 4)} for s, c in all_topk[:3]]
+                
+                # Try to find ANY match in top-k predictions that's in allowed list
+                matched_species = None
+                matched_conf = None
+                
+                for pred_species, pred_conf in all_topk:
+                    if is_allowed_species(pred_species, allowed_species_list):
+                        matched_species = pred_species
+                        matched_conf = pred_conf
+                        break
+                
+                if matched_species:
+                    # Found a match in top-k
+                    det = Detection(
+                        bbox=[x1, y1, x2, y2],
+                        label="animal",
+                        detector_confidence=det_conf,
+                        species=matched_species,
+                        species_confidence=matched_conf,
+                        mask_png_base64=mask_to_base64_png(sam_masks_by_box[i]) if i in sam_masks_by_box else None,
+                        bioclip_top3=topk_formatted
+                    )
+                    detections_out.append(det)
+                else:
+                    # No match in allowed list
+                    warnings.append(
+                        f"Animal detected (YOLO: {class_name}). BioCLIP top-3: {topk_formatted}. "
+                        f"None match your species list."
+                    )
+            else:
+                # Below confidence threshold
+                warnings.append(
+                    f"Animal detected (YOLO: {class_name}) but BioCLIP confidence too low "
+                    f"(< {species_confidence_threshold})."
+                )
+        
         except Exception as e:
             warnings.append(f"BioCLIP classification failed for box {i}: {e}")
-            species, species_conf, extra = None, None, None
-
-        det = Detection(
-            bbox=[x1, y1, x2, y2],
-            label=label,
-            detector_confidence=det_conf,
-            species=species,
-            species_confidence=species_conf,
-            mask_png_base64=mask_to_base64_png(sam_masks_by_box[i]) if i in sam_masks_by_box else None,
-            extra=extra
-        )
-        detections_out.append(det)
 
     return IdentifyResponse(detections=detections_out, warnings=warnings)
