@@ -1,0 +1,38 @@
+nohup: ignoring input
+INFO:     Started server process [3318262]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:3002 (Press CTRL+C to quit)
+Backend URL: http://localhost:3000
+Device: cpu
+ultralytics YOLO not available. Install with: pip install ultralytics
+segment-anything not available. Install with: pip install git+https://github.com/facebookresearch/segment-anything.git
+INFO:     127.0.0.1:43524 - "GET /health HTTP/1.1" 404 Not Found
+INFO:     127.0.0.1:54924 - "GET /health HTTP/1.1" 404 Not Found
+WARNING:  Invalid HTTP request received.
+INFO:     89.187.162.175:38718 - "GET / HTTP/1.1" 404 Not Found
+INFO:     89.187.162.175:38718 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+WARNING:  Invalid HTTP request received.
+INFO:     123.58.196.28:43440 - "GET / HTTP/1.1" 404 Not Found
+INFO:     123.58.196.28:42582 - "GET /favicon.ico HTTP/1.1" 404 Not Found
+INFO:     123.58.196.28:42590 - "GET /robots.txt HTTP/1.1" 404 Not Found
+INFO:     123.58.196.28:42602 - "GET /sitemap.xml HTTP/1.1" 404 Not Found
+INFO:     123.58.196.28:42608 - "GET /sse HTTP/1.1" 404 Not Found
+INFO:     123.58.196.28:42620 - "GET /mcp HTTP/1.1" 404 Not Found
+INFO:     123.58.196.28:42628 - "GET /mcp-sse HTTP/1.1" 404 Not Found
+INFO:     123.58.196.28:60558 - "GET /get_server_info HTTP/1.1" 404 Not Found
+INFO:     87.236.176.79:33183 - "GET / HTTP/1.1" 404 Not Found
+WARNING:  Invalid HTTP request received.
+INFO:     172.105.128.12:21952 - "GET / HTTP/1.1" 404 Not Found
+Falling back to default species list
+INFO:     127.0.0.1:56934 - "POST /identify HTTP/1.1" 200 OK
+Falling back to default species list
+INFO:     127.0.0.1:48390 - "POST /identify HTTP/1.1" 200 OK
+Falling back to default species list
+INFO:     127.0.0.1:46962 - "POST /identify HTTP/1.1" 200 OK
+Falling back to default species list
+INFO:     127.0.0.1:41346 - "POST /identify HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [3318262]

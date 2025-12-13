@@ -83,6 +83,8 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       console.log('Client Info:', clientInfo);
     }
 
+    console.log("We are here");
+
     // Step 2: Upload image to Cloudinary
     const clResult = await uploadToCloudinary(
       file.buffer,
@@ -105,6 +107,7 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     form.append("detector_threshold", "0.30");
     form.append("topk_species", "3");
 
+    console.log("We are going to AI Service");
     const aiResponse = await axios.post(process.env.AI_SERVER_URL, form, {
       headers: form.getHeaders(),
       timeout: 90_000,
@@ -184,7 +187,7 @@ app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3003;
 app.listen(PORT, () => {
   console.log(`Camera Trap Backend (ESM) running on http://localhost:${PORT}`);
   console.log(`Ready to receive images`);
