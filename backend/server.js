@@ -27,6 +27,97 @@ const upload = multer(); // memory buffer only
 app.use(cors());
 
 // ====================
+// Aggregation config
+// ====================
+const AGGREGATION_WINDOW_MS = 60 * 1000; // 1 minute
+const MAX_IMAGES_PER_EVENT = 5;
+const aggregations = new Map(); // trapId -> { images: [], timer }
+
+const finalizeAggregation = async (trapId) => {
+  const agg = aggregations.get(trapId);
+  if (!agg) return;
+  clearTimeout(agg.timer);
+  try {
+    const images = agg.images;
+    if (!images.length) return;
+
+    const clientInfo = images[0].clientInfo || {};
+
+    // Build species scoring across images
+    const speciesStats = {}; // species -> { score, count, examples }
+
+    images.forEach((img) => {
+      (img.detectionsRaw || []).forEach((det) => {
+        const key = det.species || det.label || 'Unknown';
+        const score = Number(det.species_confidence ?? det.detector_confidence ?? 0);
+        if (!speciesStats[key]) speciesStats[key] = { score: 0, count: 0, examples: [] };
+        speciesStats[key].score += score;
+        speciesStats[key].count += 1;
+        speciesStats[key].examples.push({ score, det, imageUrl: img.imageUrl });
+      });
+    });
+
+    const speciesEntries = Object.entries(speciesStats);
+    speciesEntries.sort((a, b) => {
+      // sort by total score then by count
+      if (b[1].score !== a[1].score) return b[1].score - a[1].score;
+      return b[1].count - a[1].count;
+    });
+
+    const aggregatedDetections = speciesEntries.slice(0, 3).map(([species, s]) => ({
+      species,
+      aggregatedScore: Number((s.score / s.count || 0).toFixed(4)),
+      count: s.count,
+    }));
+
+    // Choose best detection example for bbox/mask if available
+    const bestSpecies = speciesEntries[0]?.[0] || 'Unknown';
+    const bestExample = speciesEntries[0]?.[1]?.examples?.[0] ?? null;
+
+    const finalPayload = {
+      trapId,
+      eventStartTime: images[0].captureTime || images[0].processingTime,
+      eventEndTime: images[images.length - 1].processingTime,
+      images: images.map((i) => ({ imageUrl: i.imageUrl, publicId: i.publicId, thumbnailUrl: i.thumbnailUrl })),
+      clientId: clientInfo.clientId,
+      clientName: clientInfo.clientName || null,
+      location: clientInfo.location || null,
+      project: clientInfo.project || null,
+      temperatureValues: images.map((i) => i.temperature).filter((t) => t != null),
+      totalImagesReceived: images.length,
+      aggregatedDetections,
+      bestSpecies: bestSpecies,
+      bestExample,
+      warnings: images.flatMap((i) => i.warnings || []),
+      metadataParseErrors: images.map((i) => i.metadataParseError).filter(Boolean),
+      createdAt: new Date().toISOString(),
+    };
+
+    await axios.post(process.env.BFF_STORE_URL, finalPayload, { timeout: 15000 });
+    console.log(`Aggregated event stored for trap ${trapId} (images=${images.length})`);
+  } catch (err) {
+    console.error('Failed to finalize aggregation for', trapId, err?.response?.data || err.message || err);
+  } finally {
+    aggregations.delete(trapId);
+  }
+};
+
+const addImageToAggregation = (trapId, clientInfo, perImage) => {
+  let agg = aggregations.get(trapId);
+  if (!agg) {
+    agg = { images: [], timer: null };
+    agg.timer = setTimeout(() => finalizeAggregation(trapId), AGGREGATION_WINDOW_MS);
+    aggregations.set(trapId, agg);
+  }
+  agg.images.push({ clientInfo, ...perImage });
+  if (agg.images.length >= MAX_IMAGES_PER_EVENT) {
+    clearTimeout(agg.timer);
+    // finalize asynchronously
+    setImmediate(() => finalizeAggregation(trapId));
+  }
+};
+
+// ====================
 // Helper: Upload buffer to Cloudinary
 // ====================
 const uploadToCloudinary = (buffer, originalName, trapId) => {
@@ -60,7 +151,7 @@ const uploadToCloudinary = (buffer, originalName, trapId) => {
 // ====================
 app.post("/upload", upload.single("image"), async (req, res) => {
   try {
-    const { trapId, captureTime } = req.body;
+    const { trapId, captureTime, temperature, metadata } = req.body;
     const file = req.file;
 
     if (!trapId || !captureTime || !file) {
@@ -69,29 +160,41 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       });
     }
 
-    // Step 1: Get client details from BFF
+    // 1. Parse temperature
+    const tempValue = temperature ? parseFloat(temperature) : null;
+
+    // 2. Parse detailed timing metadata
+    let timing = {};
+    let metadataParseError = null;
+
+    if (metadata) {
+      try {
+        const parsed = JSON.parse(metadata);
+        timing = {
+          triggerTime: parsed.triggerTime || null,
+          captureTimeDevice: parsed.captureTime || null,     // renamed for clarity
+          pppStartTime: parsed.pppStartTime || null,
+          pppConnectedTime: parsed.pppConnectedTime || null,
+        };
+      } catch (e) {
+        console.warn("Failed to parse metadata JSON:", e.message);
+        metadataParseError = e.message;
+      }
+    }
+
+    // Step 1: Client lookup (unchanged)
     const { data: clientInfo } = await axios.post(
       process.env.BFF_CLIENT_LOOKUP_URL,
       { trapId },
       { timeout: 8000 }
     );
 
-    if (!clientInfo || !clientInfo.clientId) {
-      return res.status(404).json({ error: "Client not found for this trapId" });
-    }
-    else{
-      console.log('Client Info:', clientInfo);
+    if (!clientInfo?.clientId) {
+      return res.status(404).json({ error: "Client not found for trapId" });
     }
 
-    console.log("We are here");
-
-    // Step 2: Upload image to Cloudinary
-    const clResult = await uploadToCloudinary(
-      file.buffer,
-      file.originalname,
-      trapId
-    );
-
+    // Step 2: Cloudinary upload (unchanged)
+    const clResult = await uploadToCloudinary(file.buffer, file.originalname, trapId);
     const imageUrl = clResult.secure_url;
     const publicId = clResult.public_id;
     const thumbnailUrl = cloudinary.url(publicId, {
@@ -99,53 +202,77 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       transformation: { width: 800, height: 600, crop: "limit", fetch_format: "auto" },
     });
 
-    // Step 3: Send to BioCLIP AI server
+    // Step 3: AI inference (unchanged)
     const form = new FormData();
-    form.append("file", file.buffer, file.originalname);
+    form.append("file", file.buffer, file.originalname || "capture.jpg");
     form.append("client_id", clientInfo.clientId);
     form.append("run_sam", "false");
     form.append("detector_threshold", "0.30");
     form.append("topk_species", "3");
 
-    console.log("We are going to AI Service");
     const aiResponse = await axios.post(process.env.AI_SERVER_URL, form, {
       headers: form.getHeaders(),
-      timeout: 90_000,
+      timeout: 90000,
     });
-
-    console.log('AI Response:', aiResponse.data);
 
     const { detections = [], warnings = [] } = aiResponse.data;
 
-    // Step 4: Final payload to BFF
-    const processingTime = new Date().toISOString();
-    const delaySeconds = Math.round(
-      (new Date(processingTime) - new Date(captureTime)) / 1000
-    );
+    // ── New: Calculate detailed delays ──────────────────────────────────────
+    const now = new Date();
+    const processingTime = now.toISOString();
 
+    const calculateDelayMs = (start, end) => {
+      if (!start || !end) return null;
+      try {
+        return Math.round((new Date(end) - new Date(start)) / 1000 * 10) / 10; // 0.1s precision
+      } catch {
+        return null;
+      }
+    };
+
+    const delays = {
+      triggerToCapture: calculateDelayMs(timing.triggerTime, timing.captureTimeDevice),
+      captureToPppStart: calculateDelayMs(timing.captureTimeDevice, timing.pppStartTime),
+      pppStartToConnected: calculateDelayMs(timing.pppStartTime, timing.pppConnectedTime),
+      pppConnectedToProcessing: calculateDelayMs(timing.pppConnectedTime, processingTime),
+      totalDeviceToProcessing: calculateDelayMs(timing.triggerTime, processingTime),
+    };
+
+    // Step 4: Final payload
     const finalPayload = {
       trapId,
-      captureTime,
+      captureTime,                    // the one sent in form field (filename based)
       processingTime,
-      processingDelaySeconds: delaySeconds,
+      processingDelaySeconds: delays.totalDeviceToProcessing ?? null,
 
-      // From BFF lookup
+      // New timing information
+      deviceTimings: {
+        triggerTime: timing.triggerTime,
+        captureTimeDevice: timing.captureTimeDevice,
+        pppStartTime: timing.pppStartTime,
+        pppConnectedTime: timing.pppConnectedTime,
+      },
+      calculatedDelaysSeconds: delays,
+
+      temperature: tempValue,
+
+      // Client info
       clientId: clientInfo.clientId,
-      clientName: clientInfo.clientName,
-      location: clientInfo.location,
-      project: clientInfo.project,
+      clientName: clientInfo.clientName || null,
+      location: clientInfo.location || null,
+      project: clientInfo.project || null,
 
       // Image
       imageUrl,
       publicId,
       thumbnailUrl,
 
-      // AI Results
+      // AI
       totalDetections: detections.length,
-      detections: detections.map((det) => ({
+      detections: detections.map(det => ({
         species: det.species || "Unknown",
         confidence: det.species_confidence ? Number(det.species_confidence.toFixed(4)) : null,
-        detectorConfidence: Number(det.detector_confidence.toFixed(4)),
+        detectorConfidence: Number(det.detector_confidence?.toFixed(4)),
         bbox: det.bbox,
         label: det.label,
         maskUrl: det.mask_png_base64 || null,
@@ -153,28 +280,38 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       })),
 
       warnings,
+      metadataParseError, // only present if parsing failed
     };
 
-    console.log('Final Payload:', finalPayload);
-
-    // Step 5: Send to BFF for storage
-    await axios.post(process.env.BFF_STORE_URL, finalPayload, {
-      timeout: 15_000,
+    // Queue this image's result into the per-trap aggregator. Final storage
+    // will happen once the event window completes or max images reached.
+    addImageToAggregation(trapId, clientInfo, {
+      captureTime,
+      processingTime,
+      imageUrl,
+      publicId,
+      thumbnailUrl,
+      detectionsRaw: detections,
+      warnings,
+      metadataParseError,
+      temperature: tempValue,
+      processingDelaySeconds: delays.totalDeviceToProcessing,
     });
 
-    console.log('Data successfully sent to BFF for storage.');
-
-    // Step 6: Respond to camera trap
+    // Response to device (per-image)
     res.json({
       status: "success",
-      message: "Image processed and saved",
+      message: "Image processed and queued",
       imageUrl,
       detections: finalPayload.totalDetections,
-      processingDelaySeconds: delaySeconds,
+      processingDelaySeconds: delays.totalDeviceToProcessing ?? -1,
+      timingFeedback: {
+        totalDelay: delays.totalDeviceToProcessing,
+        pppConnectionTime: delays.pppStartToConnected
+      }
     });
   } catch (error) {
-    console.error("Upload failed:", error.response?.data || error.message);
-
+    console.error("Upload processing failed:", error);
     res.status(500).json({
       error: "Processing failed",
       details: error.response?.data || error.message,
