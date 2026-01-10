@@ -37,6 +37,7 @@ const finalizeAggregation = async (trapId) => {
   const agg = aggregations.get(trapId);
   if (!agg) return;
   clearTimeout(agg.timer);
+  console.log(`finalizeAggregation: starting for trap ${trapId} (images=${agg.images.length})`);
   try {
     const images = agg.images;
     if (!images.length) return;
@@ -74,10 +75,16 @@ const finalizeAggregation = async (trapId) => {
     const bestSpecies = speciesEntries[0]?.[0] || 'Unknown';
     const bestExample = speciesEntries[0]?.[1]?.examples?.[0] ?? null;
 
+    const eventStart = images[0].captureTime || images[0].processingTime;
+    const eventEnd = images[images.length - 1].processingTime;
+
     const finalPayload = {
       trapId,
-      eventStartTime: images[0].captureTime || images[0].processingTime,
-      eventEndTime: images[images.length - 1].processingTime,
+      eventStartTime: eventStart,
+      eventEndTime: eventEnd,
+      // keep compatibility fields expected by older single-image payloads
+      captureTime: eventStart,
+      processingTime: eventEnd,
       images: images.map((i) => ({ imageUrl: i.imageUrl, publicId: i.publicId, thumbnailUrl: i.thumbnailUrl })),
       clientId: clientInfo.clientId,
       clientName: clientInfo.clientName || null,
@@ -88,17 +95,40 @@ const finalizeAggregation = async (trapId) => {
       aggregatedDetections,
       bestSpecies: bestSpecies,
       bestExample,
+      // compatibility: expose top-level detections-summary similar to single-upload
+      totalDetections: aggregatedDetections.length,
+      detections: aggregatedDetections.map(d => ({ species: d.species, confidence: d.aggregatedScore, count: d.count })),
+      // top image for UI preview
+      imageUrl: bestExample?.imageUrl || images[0].imageUrl,
       warnings: images.flatMap((i) => i.warnings || []),
       metadataParseErrors: images.map((i) => i.metadataParseError).filter(Boolean),
       createdAt: new Date().toISOString(),
     };
 
-    await axios.post(process.env.BFF_STORE_URL, finalPayload, { timeout: 15000 });
-    console.log(`Aggregated event stored for trap ${trapId} (images=${images.length})`);
+    if (!process.env.BFF_STORE_URL) {
+      console.warn('BFF_STORE_URL not set; skipping remote store. Payload:', finalPayload);
+    } else {
+      try {
+        await axios.post(process.env.BFF_STORE_URL, finalPayload, { timeout: 15000 });
+        console.log(`Aggregated event stored for trap ${trapId} (images=${images.length})`);
+      } catch (postErr) {
+        console.error('BFF store rejected payload for', trapId, 'status=', postErr.response?.status, 'body=', postErr.response?.data);
+        console.error('FinalPayload keys:', Object.keys(finalPayload));
+        console.error('FinalPayload (summary):', {
+          trapId: finalPayload.trapId,
+          eventStartTime: finalPayload.eventStartTime,
+          eventEndTime: finalPayload.eventEndTime,
+          totalImagesReceived: finalPayload.totalImagesReceived,
+          totalDetections: finalPayload.totalDetections,
+          bestSpecies: finalPayload.bestSpecies,
+        });
+      }
+    }
   } catch (err) {
     console.error('Failed to finalize aggregation for', trapId, err?.response?.data || err.message || err);
   } finally {
     aggregations.delete(trapId);
+    console.log(`finalizeAggregation: finished for trap ${trapId}`);
   }
 };
 
@@ -110,12 +140,19 @@ const addImageToAggregation = (trapId, clientInfo, perImage) => {
     aggregations.set(trapId, agg);
   }
   agg.images.push({ clientInfo, ...perImage });
+  console.log(`addImageToAggregation: trap=${trapId} images=${agg.images.length}`);
   if (agg.images.length >= MAX_IMAGES_PER_EVENT) {
     clearTimeout(agg.timer);
     // finalize asynchronously
     setImmediate(() => finalizeAggregation(trapId));
   }
 };
+
+// Debug endpoint to inspect current aggregations (counts only)
+app.get('/debug/aggregations', (req, res) => {
+  const data = Array.from(aggregations.entries()).map(([trapId, agg]) => ({ trapId, count: agg.images.length }));
+  res.json({ count: data.length, aggregations: data });
+});
 
 // ====================
 // Helper: Upload buffer to Cloudinary
