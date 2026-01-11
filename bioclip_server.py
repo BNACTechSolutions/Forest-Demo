@@ -43,35 +43,6 @@ print(f"Backend URL: {BACKEND_URL}")
 # Default fallback list
 DEFAULT_SPECIES = ["Dog", "Cat", "Cow"]
 
-# EXPANDED species list for BioCLIP classification
-# This ensures BioCLIP can distinguish between similar animals
-BIOCLIP_EXTENDED_SPECIES = [
-    # Canines
-    "Dog", "Wolf", "Fox", "Coyote", "Jackal", "Dingo",
-    # Felines
-    "Cat", "Lion", "Tiger", "Leopard", "Cheetah", "Jaguar", "Panther", "Lynx", "Puma", "Cougar",
-    # Bovines
-    "Cow", "Bull", "Buffalo", "Bison", "Ox", "Yak", "Water Buffalo",
-    # Equines
-    "Horse", "Zebra", "Donkey", "Mule",
-    # Primates (NOT humans)
-    "Monkey", "Chimpanzee", "Gorilla", "Orangutan", "Baboon", "Lemur", "Gibbon", "Macaque",
-    # Bears
-    "Bear", "Grizzly Bear", "Polar Bear", "Black Bear", "Panda",
-    # Birds
-    "Bird", "Eagle", "Hawk", "Owl", "Parrot", "Crow", "Pigeon", "Sparrow", "Penguin", "Flamingo",
-    # Reptiles
-    "Snake", "Lizard", "Crocodile", "Alligator", "Turtle", "Tortoise", "Iguana",
-    # Rodents
-    "Mouse", "Rat", "Squirrel", "Hamster", "Guinea Pig", "Rabbit", "Beaver",
-    # Marine
-    "Dolphin", "Whale", "Seal", "Sea Lion", "Otter",
-    # Farm/Domestic
-    "Sheep", "Goat", "Pig", "Chicken", "Duck", "Goose", "Turkey",
-    # Wild
-    "Elephant", "Giraffe", "Rhinoceros", "Hippopotamus", "Kangaroo", "Deer", "Moose", "Elk",
-]
-
 candidate_species = DEFAULT_SPECIES
 
 # -------------------------
@@ -84,9 +55,6 @@ model, preprocess_train, preprocess_val = open_clip.create_model_and_transforms(
 tokenizer = open_clip.get_tokenizer('hf-hub:imageomics/bioclip-2')
 model = model.to(device)
 model.eval()
-
-# Tokenize the EXTENDED species list for BioCLIP
-bioclip_text_tokens = tokenizer(BIOCLIP_EXTENDED_SPECIES).to(device)
 
 # -------------------------
 # Optional: YOLO object detector
@@ -160,22 +128,28 @@ def mask_to_base64_png(mask: np.ndarray) -> str:
     mask_img.save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("utf-8")
 
-def classify_with_bioclip(pil_crop: Image.Image, confidence_threshold: float = 0.5, topk: int = 3) -> Optional[Tuple[str, float, List[Tuple[str, float]]]]:
+def classify_with_bioclip(pil_crop: Image.Image, allowed_species: List[str], confidence_threshold: float = 0.3, topk: int = 3) -> Optional[Tuple[str, float, List[Tuple[str, float]]]]:
     """
-    Classify crop with BioCLIP using EXTENDED species list.
+    Classify crop with BioCLIP using only the allowed species list.
     Returns (species, confidence, top_k_predictions) with highest confidence, or None if below threshold.
     """
+    if not allowed_species:
+        return None
+    
+    species_list = list(set(allowed_species))  # Remove duplicates if any
+    text_tokens = tokenizer(species_list).to(device)
+    
     img_t = preprocess_val(pil_crop).unsqueeze(0).to(device)
     
     with torch.no_grad():
         image_features = model.encode_image(img_t)
-        text_features = model.encode_text(bioclip_text_tokens)
+        text_features = model.encode_text(text_tokens)
         image_features /= image_features.norm(dim=-1, keepdim=True)
         text_features /= text_features.norm(dim=-1, keepdim=True)
         logits = (100.0 * image_features @ text_features.T).softmax(dim=-1)
     
     # Get top-k predictions
-    topk_vals, topk_idxs = logits[0].topk(min(topk, len(BIOCLIP_EXTENDED_SPECIES)))
+    topk_vals, topk_idxs = logits[0].topk(min(topk, len(species_list)))
     
     max_conf = float(topk_vals[0])
     max_idx = int(topk_idxs[0])
@@ -183,22 +157,12 @@ def classify_with_bioclip(pil_crop: Image.Image, confidence_threshold: float = 0
     if max_conf < confidence_threshold:
         return None
     
-    predicted_species = BIOCLIP_EXTENDED_SPECIES[max_idx]
+    predicted_species = species_list[max_idx]
     
     # Get all top-k for debugging
-    all_topk = [(BIOCLIP_EXTENDED_SPECIES[int(idx)], float(val)) for idx, val in zip(topk_idxs, topk_vals)]
+    all_topk = [(species_list[int(idx)], float(val)) for idx, val in zip(topk_idxs, topk_vals)]
     
     return predicted_species, max_conf, all_topk
-
-def is_allowed_species(predicted_species: str, allowed_list: List[str]) -> bool:
-    """
-    Check if predicted species is in the allowed list (case-insensitive exact match).
-    """
-    predicted_lower = predicted_species.lower()
-    for allowed in allowed_list:
-        if allowed.lower() == predicted_lower:
-            return True
-    return False
 
 def is_animal_class(class_name: str) -> bool:
     """Check if YOLO class name represents an animal we care about."""
@@ -241,7 +205,7 @@ async def identify(
     client_id: str = Form(None),
     run_sam: bool = Form(False),
     detector_threshold: float = Form(0.35),
-    species_confidence_threshold: float = Form(0.3),  # LOWERED from 0.5 to 0.3
+    species_confidence_threshold: float = Form(0.3),
     topk_species: int = Form(5),
 ):
     """
@@ -365,7 +329,7 @@ async def identify(
         crop = crop_pil(pil_img, box)
         
         try:
-            result = classify_with_bioclip(crop, confidence_threshold=species_confidence_threshold, topk=5)
+            result = classify_with_bioclip(crop, allowed_species=allowed_species_list, confidence_threshold=species_confidence_threshold, topk=5)
             
             if result is not None:
                 predicted_species, species_conf, all_topk = result
@@ -373,34 +337,16 @@ async def identify(
                 # Format top-k for response
                 topk_formatted = [{"species": s, "confidence": round(c, 4)} for s, c in all_topk[:3]]
                 
-                # Try to find ANY match in top-k predictions that's in allowed list
-                matched_species = None
-                matched_conf = None
-                
-                for pred_species, pred_conf in all_topk:
-                    if is_allowed_species(pred_species, allowed_species_list):
-                        matched_species = pred_species
-                        matched_conf = pred_conf
-                        break
-                
-                if matched_species:
-                    # Found a match in top-k
-                    det = Detection(
-                        bbox=[x1, y1, x2, y2],
-                        label="animal",
-                        detector_confidence=det_conf,
-                        species=matched_species,
-                        species_confidence=matched_conf,
-                        mask_png_base64=mask_to_base64_png(sam_masks_by_box[i]) if i in sam_masks_by_box else None,
-                        bioclip_top3=topk_formatted
-                    )
-                    detections_out.append(det)
-                else:
-                    # No match in allowed list
-                    warnings.append(
-                        f"Animal detected (YOLO: {class_name}). BioCLIP top-3: {topk_formatted}. "
-                        f"None match your species list."
-                    )
+                det = Detection(
+                    bbox=[x1, y1, x2, y2],
+                    label="animal",
+                    detector_confidence=det_conf,
+                    species=predicted_species,
+                    species_confidence=species_conf,
+                    mask_png_base64=mask_to_base64_png(sam_masks_by_box[i]) if i in sam_masks_by_box else None,
+                    bioclip_top3=topk_formatted
+                )
+                detections_out.append(det)
             else:
                 # Below confidence threshold
                 warnings.append(
