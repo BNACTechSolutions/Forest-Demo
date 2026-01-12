@@ -85,7 +85,7 @@ const finalizeAggregation = async (trapId) => {
       // keep compatibility fields expected by older single-image payloads
       captureTime: eventStart,
       processingTime: eventEnd,
-      images: images.map((i) => ({ imageUrl: i.imageUrl, publicId: i.publicId, thumbnailUrl: i.thumbnailUrl })),
+      images: images.map((i) => ({ imageUrl: i.imageUrl, publicId: i.publicId, thumbnailUrl: i.thumbnailUrl, deviceTimings: i.deviceTimings || null, aiTimings: i.aiTimings || null })),
       clientId: clientInfo.clientId,
       clientName: clientInfo.clientName || null,
       location: clientInfo.location || null,
@@ -102,6 +102,8 @@ const finalizeAggregation = async (trapId) => {
       imageUrl: bestExample?.imageUrl || images[0].imageUrl,
       warnings: images.flatMap((i) => i.warnings || []),
       metadataParseErrors: images.map((i) => i.metadataParseError).filter(Boolean),
+      deviceTimings: images[0]?.deviceTimings || null,
+      aiTimings: images[0]?.aiTimings || null,
       createdAt: new Date().toISOString(),
     };
 
@@ -230,8 +232,10 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       return res.status(404).json({ error: "Client not found for trapId" });
     }
 
-    // Step 2: Cloudinary upload (unchanged)
+    // Step 2: Cloudinary upload (record time)
+    const uploadStart = new Date().toISOString();
     const clResult = await uploadToCloudinary(file.buffer, file.originalname, trapId);
+    const cloudinaryUploadTime = new Date().toISOString();
     const imageUrl = clResult.secure_url;
     const publicId = clResult.public_id;
     const thumbnailUrl = cloudinary.url(publicId, {
@@ -239,7 +243,7 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       transformation: { width: 800, height: 600, crop: "limit", fetch_format: "auto" },
     });
 
-    // Step 3: AI inference (unchanged)
+    // Step 3: AI inference (record timings)
     const form = new FormData();
     form.append("file", file.buffer, file.originalname || "capture.jpg");
     form.append("client_id", clientInfo.clientId);
@@ -247,10 +251,35 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     form.append("detector_threshold", "0.30");
     form.append("topk_species", "3");
 
-    const aiResponse = await axios.post(process.env.AI_SERVER_URL, form, {
-      headers: form.getHeaders(),
-      timeout: 90000,
-    });
+    let aiResponse;
+    const aiRequestSentAt = new Date().toISOString();
+    let aiResponseReceivedAt = null;
+    let aiTimings = null;
+    try {
+      aiResponse = await axios.post(process.env.AI_SERVER_URL, form, {
+        headers: form.getHeaders(),
+        timeout: 90000,
+      });
+      aiResponseReceivedAt = new Date().toISOString();
+      aiTimings = {
+        requestSentAt: aiRequestSentAt,
+        responseReceivedAt: aiResponseReceivedAt,
+        durationMs: new Date(aiResponseReceivedAt) - new Date(aiRequestSentAt),
+        status: 'ok'
+      };
+    } catch (aiErr) {
+      aiResponseReceivedAt = new Date().toISOString();
+      aiTimings = {
+        requestSentAt: aiRequestSentAt,
+        responseReceivedAt: aiResponseReceivedAt,
+        durationMs: new Date(aiResponseReceivedAt) - new Date(aiRequestSentAt),
+        status: 'error',
+        error: aiErr.response?.data || aiErr.message
+      };
+      console.error('AI call failed:', aiErr?.response?.data || aiErr.message || aiErr);
+      // Continue but set empty detections and add a warning
+      aiResponse = { data: { detections: [], warnings: [(aiErr.response?.data || aiErr.message || 'AI error').toString()] } };
+    }
 
     const { detections = [], warnings = [] } = aiResponse.data;
 
@@ -290,6 +319,12 @@ app.post("/upload", upload.single("image"), async (req, res) => {
         pppConnectedTime: timing.pppConnectedTime,
       },
       calculatedDelaysSeconds: delays,
+      aiTimings: aiTimings || null,
+      processingStages: {
+        cloudinaryUploadTime: cloudinaryUploadTime || null,
+        aiRequestSentAt: aiRequestSentAt || null,
+        aiResponseReceivedAt: aiResponseReceivedAt || null,
+      },
 
       temperature: tempValue,
 
@@ -333,6 +368,18 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       metadataParseError,
       temperature: tempValue,
       processingDelaySeconds: delays.totalDeviceToProcessing,
+      deviceTimings: {
+        triggerTime: timing.triggerTime,
+        captureTimeDevice: timing.captureTimeDevice,
+        pppStartTime: timing.pppStartTime,
+        pppConnectedTime: timing.pppConnectedTime,
+      },
+      aiTimings: aiTimings || null,
+      processingStages: {
+        cloudinaryUploadTime: cloudinaryUploadTime || null,
+        aiRequestSentAt: aiRequestSentAt || null,
+        aiResponseReceivedAt: aiResponseReceivedAt || null,
+      },
     });
 
     // Response to device (per-image)
