@@ -7,12 +7,12 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         PORT: 3003,
-        AI_SERVER_URL: "http://localhost:8000/identify",
+        AI_SERVER_URL: "http://localhost:3002/identify",
         BFF_CLIENT_LOOKUP_URL: "https://backend.chakhyudemo.com/api/traps/lookup",
         BFF_STORE_URL: "https://backend.chakhyudemo.com/api/detection",
-        CLOUDINARY_CLOUD_NAME: "PUT_YOUR_CLOUD_NAME",
-        CLOUDINARY_API_KEY: "PUT_YOUR_API_KEY",
-        CLOUDINARY_API_SECRET: "PUT_YOUR_API_SECRET"
+        CLOUDINARY_CLOUD_NAME: "dt8bmvetv",
+        CLOUDINARY_API_KEY: "826156558475825",
+        CLOUDINARY_API_SECRET: "pTiFFbrL-CWTmwmsdxk2w9bNw0w"
       }
     }
   ]

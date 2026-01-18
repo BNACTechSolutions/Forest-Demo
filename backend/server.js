@@ -252,7 +252,7 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     form.append("run_sam", "false");
     form.append("detector_threshold", "0.30");
     form.append("topk_species", "3");
-
+    console.log(process.env.AI_SERVER_URL);
     let aiResponse;
     const aiRequestSentAt = new Date().toISOString();
     let aiResponseReceivedAt = null;
