@@ -199,6 +199,8 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       });
     }
 
+    console.log('Timings for hardware: ', metadata);
+
     // 1. Parse temperature
     const tempValue = temperature ? parseFloat(temperature) : null;
 
