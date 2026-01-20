@@ -44,17 +44,27 @@ const finalizeAggregation = async (trapId) => {
 
     const clientInfo = images[0].clientInfo || {};
 
+    // Extract timing information (same for all images)
+    const firstImage = images[0];
+    const triggerTime = firstImage.deviceTimings?.triggerTime || null;
+    const pppStartTime = firstImage.deviceTimings?.pppStartTime || null;
+    const pppConnectedTime = firstImage.deviceTimings?.pppConnectedTime || null;
+
+    // AI processing times (aggregate across all images)
+    const aiStartTime = images[0].processingStartTime || images[0].processingTime;
+    const aiEndTime = images[images.length - 1].processingTime;
+
     // Build species scoring across images
     const speciesStats = {}; // species -> { score, count, examples }
 
-    images.forEach((img) => {
+    images.forEach((img, idx) => {
       (img.detectionsRaw || []).forEach((det) => {
         const key = det.species || det.label || 'Unknown';
         const score = Number(det.species_confidence ?? det.detector_confidence ?? 0);
         if (!speciesStats[key]) speciesStats[key] = { score: 0, count: 0, examples: [] };
         speciesStats[key].score += score;
         speciesStats[key].count += 1;
-        speciesStats[key].examples.push({ score, det, imageUrl: img.imageUrl });
+        speciesStats[key].examples.push({ score, det, imageUrl: img.imageUrl, imageIndex: idx });
       });
     });
 
@@ -74,18 +84,60 @@ const finalizeAggregation = async (trapId) => {
     // Choose best detection example for bbox/mask if available
     const bestSpecies = speciesEntries[0]?.[0] || 'Unknown';
     const bestExample = speciesEntries[0]?.[1]?.examples?.[0] ?? null;
+    const bestImageIndex = bestExample?.imageIndex ?? 0;
 
-    const eventStart = images[0].captureTime || images[0].processingTime;
+    const eventStart = images[0].serverReceiptTime || images[0].captureTime || images[0].processingTime;
     const eventEnd = images[images.length - 1].processingTime;
+
+    // Calculate total processing delay from trigger (if valid) to final completion
+    let totalProcessingDelaySeconds = null;
+    const firstTrigger = triggerTime;
+    
+    if (firstTrigger && eventEnd) {
+      try {
+        const diffMs = new Date(eventEnd) - new Date(firstTrigger);
+        // Only accept if reasonable (not 1970 causing huge gap)
+        if (!isNaN(diffMs) && diffMs >= 0 && diffMs < 3600000) {
+          totalProcessingDelaySeconds = Math.round(diffMs / 1000);
+        }
+      } catch (e) {}
+    }
+    
+    // Fallback: use server receipt time if trigger time was invalid
+    if (totalProcessingDelaySeconds === null && eventStart && eventEnd) {
+      try {
+        const diffMs = new Date(eventEnd) - new Date(eventStart);
+        if (!isNaN(diffMs) && diffMs >= 0 && diffMs < 3600000) {
+          totalProcessingDelaySeconds = Math.round(diffMs / 1000);
+        }
+      } catch (e) {}
+    }
 
     const finalPayload = {
       trapId,
-      eventStartTime: eventStart,
+      eventStartTime: eventStart,  // Server receipt time (clean, no device 1970)
       eventEndTime: eventEnd,
-      // keep compatibility fields expected by older single-image payloads
-      captureTime: eventStart,
+      triggerTime,
+      pppStartTime,
+      pppConnectedTime,
+      aiProcessingStartTime: aiStartTime,
+      aiProcessingEndTime: aiEndTime,
+      processingDelaySeconds: totalProcessingDelaySeconds,
+      totalImagesReceived: images.length,
+      bestImageIndex,
+      // Compatibility fields for older single-image payloads
+      captureTime: eventStart,  // Use server receipt time for consistency
       processingTime: eventEnd,
-      images: images.map((i) => ({ imageUrl: i.imageUrl, publicId: i.publicId, thumbnailUrl: i.thumbnailUrl, deviceTimings: i.deviceTimings || null, aiTimings: i.aiTimings || null })),
+      // All images with their individual capture times
+      images: images.map((i, idx) => ({ 
+        imageUrl: i.imageUrl, 
+        publicId: i.publicId, 
+        thumbnailUrl: i.thumbnailUrl,
+        captureTime: i.captureTime,
+        processingTime: i.processingTime,
+        sequence: idx,
+        isBest: idx === bestImageIndex
+      })),
       clientId: clientInfo.clientId,
       clientName: clientInfo.clientName || null,
       location: clientInfo.location || null,
@@ -99,11 +151,11 @@ const finalizeAggregation = async (trapId) => {
       totalDetections: aggregatedDetections.length,
       detections: aggregatedDetections.map(d => ({ species: d.species, confidence: d.aggregatedScore, count: d.count })),
       // top image for UI preview
-      imageUrl: bestExample?.imageUrl || images[0].imageUrl,
+      imageUrl: bestExample?.imageUrl || images[bestImageIndex]?.imageUrl || images[0].imageUrl,
+      publicId: images[bestImageIndex]?.publicId || images[0].publicId,
+      thumbnailUrl: images[bestImageIndex]?.thumbnailUrl || images[0].thumbnailUrl,
       warnings: images.flatMap((i) => i.warnings || []),
       metadataParseErrors: images.map((i) => i.metadataParseError).filter(Boolean),
-      deviceTimings: images[0]?.deviceTimings || null,
-      aiTimings: images[0]?.aiTimings || null,
       createdAt: new Date().toISOString(),
     };
 
@@ -190,6 +242,7 @@ const uploadToCloudinary = (buffer, originalName, trapId) => {
 // ====================
 app.post("/upload", upload.single("image"), async (req, res) => {
   try {
+    const serverReceiptTime = new Date().toISOString(); // Capture when request arrives
     const { trapId, captureTime, temperature, metadata } = req.body;
     const file = req.file;
 
@@ -235,7 +288,7 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     }
 
     // Step 2: Cloudinary upload (record time)
-    const uploadStart = new Date().toISOString();
+    // Note: serverReceiptTime is when the request arrived at this server
     const clResult = await uploadToCloudinary(file.buffer, file.originalname, trapId);
     const cloudinaryUploadTime = new Date().toISOString();
     const imageUrl = clResult.secure_url;
@@ -292,7 +345,16 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     const calculateDelayMs = (start, end) => {
       if (!start || !end) return null;
       try {
-        return Math.round((new Date(end) - new Date(start)) / 1000 * 10) / 10; // 0.1s precision
+        const startDate = new Date(start);
+        const endDate = new Date(end);
+        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return null;
+        
+        const diffMs = endDate - startDate;
+        // Reject unrealistic delays (negative or > 1 hour)
+        // This prevents 1970 timestamps from creating huge delays
+        if (diffMs < 0 || diffMs > 3600000) return null;
+        
+        return Math.round(diffMs / 1000 * 10) / 10; // 0.1s precision
       } catch {
         return null;
       }
@@ -362,6 +424,8 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     addImageToAggregation(trapId, clientInfo, {
       captureTime,
       processingTime,
+      serverReceiptTime,  // When server received the request
+      processingStartTime: aiRequestSentAt,
       imageUrl,
       publicId,
       thumbnailUrl,
@@ -390,9 +454,9 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       message: "Image processed and queued",
       imageUrl,
       detections: finalPayload.totalDetections,
-      processingDelaySeconds: delays.totalDeviceToProcessing ?? -1,
+      processingDelaySeconds: delays.totalDeviceToProcessing ?? Math.round((aiTimings?.durationMs || 0) / 1000),
       timingFeedback: {
-        totalDelay: delays.totalDeviceToProcessing,
+        totalDelay: delays.totalDeviceToProcessing ?? Math.round((aiTimings?.durationMs || 0) / 1000),
         pppConnectionTime: delays.pppStartToConnected
       }
     });
