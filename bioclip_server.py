@@ -15,10 +15,11 @@ import os
 
 # Optional model imports
 try:
-    from ultralytics import YOLO
-    YOLO_AVAILABLE = True
-except Exception:
-    YOLO_AVAILABLE = False
+    from megadetector.detection.run_detector import load_detector
+    MEGADETECTOR_AVAILABLE = True
+except Exception as e:
+    print(f"MegaDetector package not available: {e}")
+    MEGADETECTOR_AVAILABLE = False
 
 try:
     from segment_anything import sam_model_registry, SamAutomaticMaskGenerator
@@ -57,18 +58,26 @@ model = model.to(device)
 model.eval()
 
 # -------------------------
-# Optional: YOLO object detector
+# MegaDetector v5 for poacher/animal detection
 # -------------------------
 DETECTOR = None
-if YOLO_AVAILABLE:
+if MEGADETECTOR_AVAILABLE:
     try:
-        DETECTOR = YOLO("yolov8n.pt")
-        print("YOLO detector loaded.")
+        DETECTOR = load_detector("models/md_v5a.0.0.pt")
+        print("MegaDetector v5 loaded successfully via megadetector package.")
+        print("MegaDetector classes: 1=Animal, 2=Person")
     except Exception as e:
-        print("Failed to load YOLO model:", e)
-        DETECTOR = None
+        print("Failed to load MegaDetector model:", e)
+        print("Attempting fallback to direct path...")
+        try:
+            # Fallback to MDv5a default
+            DETECTOR = load_detector("MDV5A")
+            print("MegaDetector v5 loaded via default MDV5A identifier.")
+        except Exception as e2:
+            print("Fallback failed:", e2)
+            DETECTOR = None
 else:
-    print("ultralytics YOLO not available. Install with: pip install ultralytics")
+    print("megadetector package not available. Install with: pip install megadetector")
 
 # -------------------------
 # Optional: SAM mask generator
@@ -164,21 +173,20 @@ def classify_with_bioclip(pil_crop: Image.Image, allowed_species: List[str], con
     
     return predicted_species, max_conf, all_topk
 
-def is_animal_class(class_name: str) -> bool:
-    """Check if YOLO class name represents an animal we care about."""
-    class_lower = class_name.lower()
+def preprocess_for_ir_night(pil_img: Image.Image) -> Image.Image:
+    """Preprocess IR/night images for better detection."""
+    from PIL import ImageOps
     
-    # Person is not an animal
-    if "person" in class_lower or "human" in class_lower:
-        return False
+    # Convert to grayscale for consistent processing
+    img_gray = ImageOps.grayscale(pil_img)
     
-    # Common COCO animal classes
-    animal_keywords = [
-        "dog", "cat", "horse", "sheep", "cow", "elephant", "bear", 
-        "zebra", "giraffe", "deer", "bird", "snake", "lizard"
-    ]
+    # Apply autocontrast to enhance low-contrast night/IR images
+    img_enhanced = ImageOps.autocontrast(img_gray)
     
-    return any(keyword in class_lower for keyword in animal_keywords)
+    # Convert back to RGB for detector compatibility
+    img_rgb = img_enhanced.convert("RGB")
+    
+    return img_rgb
 
 # -------------------------
 # Response models
@@ -205,18 +213,22 @@ async def identify(
     client_id: str = Form(None),
     run_sam: bool = Form(False),
     detector_threshold: float = Form(0.35),
+    poacher_threshold: float = Form(0.25),  # Lower threshold for critical poacher detection
     species_confidence_threshold: float = Form(0.3),
     topk_species: int = Form(5),
 ):
     """
-    Upload an image for identification.
+    Mission-critical poacher and animal detection system for forest environments.
     
     Parameters:
-    - file: Image file
+    - file: Image file (IR/Night vision supported)
     - client_id: Client ID to fetch their supported species
     - run_sam: Whether to run SAM mask generator
-    - detector_threshold: Minimum YOLO confidence (0-1, default 0.35)
-    - species_confidence_threshold: Minimum BioCLIP confidence (0-1, default 0.3)
+    - detector_threshold: Minimum MegaDetector confidence for animals (default 0.35)
+    - poacher_threshold: Minimum confidence for person detection (default 0.25 - no poacher missed!)
+    - species_confidence_threshold: Minimum BioCLIP confidence for animal species (default 0.3)
+    
+    MegaDetector classes: 1=Animal, 2=Person
     """
     # Fetch client's allowed species list
     allowed_species_list = candidate_species
@@ -232,67 +244,84 @@ async def identify(
 
     # If no detector available, return empty
     if DETECTOR is None:
-        warnings.append("Object detector not available. Cannot process image.")
+        warnings.append("MegaDetector not available. Cannot process image.")
         return IdentifyResponse(detections=[], warnings=warnings)
 
-    # Run YOLO detector
-    results = DETECTOR(pil_img)
-    results0 = results[0]
-
-    # Parse YOLO results
+    # Preprocess for IR/Night images: enhance contrast and normalize
+    pil_img_processed = preprocess_for_ir_night(pil_img)
+    
+    # Run MegaDetector v5 - convert PIL to numpy array
     try:
-        xyxy = results0.boxes.xyxy.cpu().numpy()
-        confs = results0.boxes.conf.cpu().numpy()
-        cls_ids = results0.boxes.cls.cpu().numpy().astype(int)
-    except Exception:
-        try:
-            data = results0.boxes.data.cpu().numpy()
-            xyxy = data[:, :4]
-            confs = data[:, 4]
-            cls_ids = data[:, 5].astype(int)
-        except Exception as e:
-            warnings.append(f"Unable to parse detector output: {e}")
+        # Convert to numpy array for MegaDetector
+        img_array = np.array(pil_img_processed)
+        
+        # MegaDetector API: generate_detections_one_image returns dict with 'detections' list
+        result = DETECTOR.generate_detections_one_image(img_array)
+        
+        # Parse MegaDetector output format
+        # Each detection: {'category': '1', 'conf': 0.95, 'bbox': [x, y, w, h]}
+        detections_list = result.get('detections', [])
+        
+        if not detections_list:
+            warnings.append("No persons or animals detected in image.")
             return IdentifyResponse(detections=[], warnings=warnings)
-
-    names_map = getattr(results0, "names", None)
-
-    # Filter valid detections (persons and animals only)
-    valid_boxes = []
-    for box, conf, cls_id in zip(xyxy, confs, cls_ids):
-        if conf < detector_threshold:
-            continue
-        
-        # Get class name
-        if names_map is not None:
-            class_name = names_map.get(int(cls_id), str(cls_id))
-        else:
-            class_name = f"class_{int(cls_id)}"
-        
-        class_lower = class_name.lower()
-        
-        # Determine label
-        if "person" in class_lower or "human" in class_lower:
-            label = "person"
-            valid_boxes.append((box.tolist(), float(conf), label, class_name))
-        elif is_animal_class(class_name):
-            label = "animal"
-            valid_boxes.append((box.tolist(), float(conf), label, class_name))
-        else:
-            # Not a person or animal - ignore (suitcase, chair, etc.)
-            continue
-
-    # If no valid detections, return empty
-    if not valid_boxes:
-        warnings.append("No persons or animals detected in image.")
+            
+    except Exception as e:
+        warnings.append(f"MegaDetector inference failed: {e}")
         return IdentifyResponse(detections=[], warnings=warnings)
 
+    # MegaDetector class mapping: 0=Animal, 1=Person
+    MD_CLASS_ANIMAL = 1  # MegaDetector uses 1 for animal
+    MD_CLASS_PERSON = 2  # MegaDetector uses 2 for person
+
+    # Convert MegaDetector format to our format
+    valid_boxes = []
+    for det in detections_list:
+        try:
+            category = int(det['category'])
+            conf = float(det['conf'])
+            bbox = det['bbox']  # [x, y, w, h] in normalized coordinates [0-1]
+            
+            # Convert normalized [x, y, w, h] to pixel [x1, y1, x2, y2]
+            x, y, w, h = bbox
+            x1 = x * img_w
+            y1 = y * img_h
+            x2 = x1 + (w * img_w)
+            y2 = y1 + (h * img_h)
+            box = [x1, y1, x2, y2]
+            
+            # POACHER-FIRST LOGIC: Use lower threshold for person detection
+            if category == MD_CLASS_PERSON:
+                if conf >= poacher_threshold:
+                    valid_boxes.append((box, conf, "person", category))
+            # Animals use standard threshold
+            elif category == MD_CLASS_ANIMAL:
+                if conf >= detector_threshold:
+                    valid_boxes.append((box, conf, "animal", category))
+                    
+        except Exception as e:
+            print(f"Error parsing detection: {e}")
+            continue
+
+    # Check if we have valid detections after filtering
+    if not valid_boxes:
+        warnings.append("No persons or animals detected above confidence thresholds.")
+        return IdentifyResponse(detections=[], warnings=warnings)
+
+    # Count detection types for comprehensive reporting
+    person_count = sum(1 for _, _, label, _ in valid_boxes if label == "person")
+    animal_count = sum(1 for _, _, label, _ in valid_boxes if label == "animal")
+    
+    print(f"\n📊 MegaDetector Results: {len(valid_boxes)} total detections")
+    print(f"   👤 Persons: {person_count} | 🦁 Animals: {animal_count}")
+    
     # Optionally compute SAM masks
     sam_masks_by_box = {}
     if run_sam and SAM_MASK_GENERATOR is not None:
         arr = np.array(pil_img)
         all_masks = SAM_MASK_GENERATOR.generate(arr)
         
-        for i, (box, conf, label, class_name) in enumerate(valid_boxes):
+        for i, (box, conf, label, md_class_id) in enumerate(valid_boxes):
             best_mask = None
             for m in all_masks:
                 mask_bool = m["segmentation"]
@@ -308,11 +337,15 @@ async def identify(
             if best_mask is not None:
                 sam_masks_by_box[i] = best_mask
 
-    # Process each detection
-    for i, (box, det_conf, label, class_name) in enumerate(valid_boxes):
+    # Separate detections by type for organized processing
+    poacher_detections = []
+    animal_detections = []
+    
+    # Process each detection with POACHER-FIRST logic
+    for i, (box, det_conf, label, md_class_id) in enumerate(valid_boxes):
         x1, y1, x2, y2 = box
         
-        # For persons, just add the detection
+        # CRITICAL: POACHER DETECTION - No classification needed, immediate alert
         if label == "person":
             det = Detection(
                 bbox=[x1, y1, x2, y2],
@@ -322,39 +355,88 @@ async def identify(
                 species_confidence=None,
                 mask_png_base64=mask_to_base64_png(sam_masks_by_box[i]) if i in sam_masks_by_box else None
             )
-            detections_out.append(det)
+            poacher_detections.append(det)
+            print(f"⚠️  CRITICAL: Person detected [{i+1}] with {det_conf:.2%} confidence")
             continue
         
-        # For animals, run BioCLIP classification
-        crop = crop_pil(pil_img, box)
-        
-        try:
-            result = classify_with_bioclip(crop, allowed_species=allowed_species_list, confidence_threshold=species_confidence_threshold, topk=5)
+
+        # For animals ONLY - run BioCLIP species classification
+        # NOTE: ALL ANIMALS ARE PROCESSED REGARDLESS OF POACHER PRESENCE
+        if label == "animal":
+            crop = crop_pil(pil_img, box)  # Crop from ORIGINAL color image, not processed
             
-            if result is not None:
-                predicted_species, species_conf, all_topk = result
+            try:
+                result = classify_with_bioclip(
+                    crop, 
+                    allowed_species=allowed_species_list, 
+                    confidence_threshold=species_confidence_threshold, 
+                    topk=5
+                )
                 
-                # Format top-k for response
-                topk_formatted = [{"species": s, "confidence": round(c, 4)} for s, c in all_topk[:3]]
-                
+                if result is not None:
+                    predicted_species, species_conf, all_topk = result
+                    
+                    # Format top-k for response
+                    topk_formatted = [{"species": s, "confidence": round(c, 4)} for s, c in all_topk[:3]]
+                    
+                    det = Detection(
+                        bbox=[x1, y1, x2, y2],
+                        label="animal",
+                        detector_confidence=det_conf,
+                        species=predicted_species,
+                        species_confidence=species_conf,
+                        mask_png_base64=mask_to_base64_png(sam_masks_by_box[i]) if i in sam_masks_by_box else None,
+                        bioclip_top3=topk_formatted
+                    )
+                    animal_detections.append(det)
+                    print(f"🦁 Animal detected [{i+1}]: {predicted_species} ({species_conf:.2%} confidence)")
+                else:
+                    # Below confidence threshold - still report as unclassified animal
+                    det = Detection(
+                        bbox=[x1, y1, x2, y2],
+                        label="animal",
+                        detector_confidence=det_conf,
+                        species="UNKNOWN_ANIMAL",
+                        species_confidence=0.0,
+                        mask_png_base64=mask_to_base64_png(sam_masks_by_box[i]) if i in sam_masks_by_box else None
+                    )
+                    animal_detections.append(det)
+                    print(f"🦁 Animal detected [{i+1}]: UNKNOWN_ANIMAL (low confidence)")
+                    warnings.append(
+                        f"Animal detected by MegaDetector but BioCLIP species confidence too low "
+                        f"(< {species_confidence_threshold}). Classified as UNKNOWN_ANIMAL."
+                    )
+            
+            except Exception as e:
+                warnings.append(f"BioCLIP classification failed for animal detection {i}: {e}")
+                print(f"❌ Animal detection [{i+1}] classification error: {e}")
+                # Still add detection as unknown animal - NO ANIMAL MISSED!
                 det = Detection(
                     bbox=[x1, y1, x2, y2],
                     label="animal",
                     detector_confidence=det_conf,
-                    species=predicted_species,
-                    species_confidence=species_conf,
-                    mask_png_base64=mask_to_base64_png(sam_masks_by_box[i]) if i in sam_masks_by_box else None,
-                    bioclip_top3=topk_formatted
+                    species="CLASSIFICATION_FAILED",
+                    species_confidence=0.0,
+                    mask_png_base64=mask_to_base64_png(sam_masks_by_box[i]) if i in sam_masks_by_box else None
                 )
-                detections_out.append(det)
-            else:
-                # Below confidence threshold
-                warnings.append(
-                    f"Animal detected (YOLO: {class_name}) but BioCLIP confidence too low "
-                    f"(< {species_confidence_threshold})."
-                )
-        
-        except Exception as e:
-            warnings.append(f"BioCLIP classification failed for box {i}: {e}")
+                animal_detections.append(det)
 
+    # Combine detections in priority order: POACHERS FIRST, then animals
+    detections_out = poacher_detections + animal_detections
+    
+    # Log final summary
+    print(f"\n✅ Processing complete: {len(poacher_detections)} poacher(s), "
+          f"{len(animal_detections)} animal(s)")
+    
     return IdentifyResponse(detections=detections_out, warnings=warnings)
+
+
+# -------------------------
+# Server startup
+# -------------------------
+if __name__ == "__main__":
+    import uvicorn
+    print("\n🚀 Starting BioCLIP Poacher Detection Server...")
+    print("📡 Server will be available at: http://localhost:8000")
+    print("📖 API docs at: http://localhost:8000/docs")
+    uvicorn.run(app, host="0.0.0.0", port=8000)
