@@ -1,0 +1,489 @@
+INFO:     Started server process [1097970]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:3002 (Press CTRL+C to quit)
+Backend URL: http://localhost:3000
+Device: cpu
+YOLO detector loaded.
+segment-anything not available.
+Falling back to default species list
+
+[W111 19:23:02.468091031 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.482373457 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.487794269 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.495307397 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.499871768 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.506593706 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.510811780 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.514524440 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.515455370 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.524402874 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.531833134 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.536370095 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.540127844 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.553540469 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.556662586 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.560432825 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.563088586 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.566665598 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.580289261 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.597597895 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.603818697 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.610354727 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.612653432 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.614041347 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.617315061 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:23:02.631631088 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+0: 512x640 1 person, 245.8ms
+Speed: 13.6ms preprocess, 245.8ms inference, 15.3ms postprocess per image at shape (1, 3, 512, 640)
+INFO:     127.0.0.1:47616 - "POST /identify HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [1097970]
+INFO:     Started server process [1098831]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:3002 (Press CTRL+C to quit)
+Backend URL: http://localhost:3000
+Device: cpu
+YOLO detector loaded.
+segment-anything not available.
+Falling back to default species list
+
+[W111 19:39:46.222359170 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.230665616 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.240843169 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.250220025 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.255656525 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.262652699 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.267411173 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.271830953 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.272811502 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.279687575 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.282386429 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.287041742 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.293096407 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.301867788 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.305091417 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.308986442 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.311750968 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.315433092 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.326424262 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.342135216 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.347477105 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.353684902 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.355728831 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.356257045 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.359332714 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:39:46.363270449 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+0: 512x640 1 person, 164.8ms
+Speed: 3.9ms preprocess, 164.8ms inference, 1.3ms postprocess per image at shape (1, 3, 512, 640)
+INFO:     127.0.0.1:38536 - "POST /identify HTTP/1.1" 200 OK
+Falling back to default species list
+
+[W111 19:48:09.898445904 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.907865139 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.914837697 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.922729175 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.927475158 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.934546068 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.939041568 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.942675929 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.943595608 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.950265253 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.953058235 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.957961779 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.959979572 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.965909638 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.969179315 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.973352771 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.976096632 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.980049386 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.991562565 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.007308791 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.012716882 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.018689689 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.020578220 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.021161216 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.023789776 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:48:09.025691767 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+0: 512x640 1 person, 145.5ms
+Speed: 1.8ms preprocess, 145.5ms inference, 1.0ms postprocess per image at shape (1, 3, 512, 640)
+INFO:     127.0.0.1:34184 - "POST /identify HTTP/1.1" 200 OK
+Falling back to default species list
+
+[W111 19:49:46.778234250 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.786566315 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.792820767 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.799953407 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.804230296 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.810448848 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.814408862 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.817761740 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.818700632 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.825179635 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.827857205 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.832367687 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.834097796 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.839264486 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.842054257 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.845800510 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.848566222 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.852148792 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.862836595 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.877905436 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.882866473 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.888270764 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.889938153 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.890447669 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.892801936 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:49:46.894460714 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+0: 512x640 1 person, 131.0ms
+Speed: 1.8ms preprocess, 131.0ms inference, 0.8ms postprocess per image at shape (1, 3, 512, 640)
+INFO:     127.0.0.1:60392 - "POST /identify HTTP/1.1" 200 OK
+Falling back to default species list
+
+[W111 19:59:40.296619649 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.305555829 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.312425530 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.320107727 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.324733726 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.331397343 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.335544032 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.339017509 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.340022317 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.346888559 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.349910267 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.354754320 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.356667336 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.362367134 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.365652008 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.369737845 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.372421287 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.376489514 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.387412114 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.402675006 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.408243381 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.415219865 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.417127942 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.417654161 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.420106018 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 19:59:40.422323410 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+0: 512x640 1 person, 141.0ms
+Speed: 1.9ms preprocess, 141.0ms inference, 0.8ms postprocess per image at shape (1, 3, 512, 640)
+INFO:     127.0.0.1:34450 - "POST /identify HTTP/1.1" 200 OK
+Falling back to default species list
+
+[W111 20:10:43.522270391 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.530448735 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.536765881 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.543950380 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.548340637 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.554666083 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.558533391 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.561929113 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.562864747 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.569366535 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.571945005 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.576819069 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.578634096 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.583921737 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.586718469 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.590525287 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.593071565 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.596657200 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.607348142 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.622059196 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.627108072 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.632792528 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.634482824 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.634958721 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.637383207 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W111 20:10:43.639076283 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+0: 512x640 1 person, 131.9ms
+Speed: 1.8ms preprocess, 131.9ms inference, 0.7ms postprocess per image at shape (1, 3, 512, 640)
+INFO:     127.0.0.1:55246 - "POST /identify HTTP/1.1" 200 OK
+INFO:     Started server process [1907]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:3002 (Press CTRL+C to quit)
+INFO:     Started server process [1951]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+Backend URL: http://localhost:3000
+Device: cpu
+YOLO detector loaded.
+segment-anything not available.
+Falling back to default species list
+
+[W112 18:17:01.491066997 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.501423426 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.509834481 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.519109826 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.524513234 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.531708644 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.536040548 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.539741454 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.540691435 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.549070159 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.555155625 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.559705823 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.564496962 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.572758845 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.575905334 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.579754622 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.582541557 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.586162742 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.597896218 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.614123140 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.620422589 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.627632989 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.629681654 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.630909689 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.634143180 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:17:01.641431540 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+0: 512x640 1 person, 227.6ms
+Speed: 13.0ms preprocess, 227.6ms inference, 15.1ms postprocess per image at shape (1, 3, 512, 640)
+INFO:     127.0.0.1:42908 - "POST /identify HTTP/1.1" 200 OK
+Falling back to default species list
+
+[W112 18:40:32.928127084 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.934046136 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.938797559 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.946144183 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.950600363 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.957232371 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.961374368 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.964871939 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.965858637 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.972498016 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.975133640 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.979676719 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.981465515 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.986909394 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.990052721 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.993912665 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.996607980 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.000371662 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.011345429 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.026446752 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.031647849 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.037368159 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.039113875 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.039638049 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.042181721 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:40:32.043619234 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+0: 512x640 1 person, 128.9ms
+Speed: 1.7ms preprocess, 128.9ms inference, 1.0ms postprocess per image at shape (1, 3, 512, 640)
+INFO:     127.0.0.1:48240 - "POST /identify HTTP/1.1" 200 OK
+Falling back to default species list
+
+[W112 18:43:03.352340079 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.358252866 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.363057626 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.370182734 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.374455143 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.380758436 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.384780454 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.388196757 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.389190939 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.395890458 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.398521698 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.403133841 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.404873433 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.410122773 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.412943920 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.416768850 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.419294856 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.422865014 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.433549891 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.449456046 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.454460344 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.459932383 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.461644035 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.462198208 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.464634759 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:43:03.465988706 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+0: 512x640 1 person, 121.4ms
+Speed: 1.7ms preprocess, 121.4ms inference, 0.7ms postprocess per image at shape (1, 3, 512, 640)
+INFO:     127.0.0.1:60138 - "POST /identify HTTP/1.1" 200 OK
+Falling back to default species list
+
+[W112 18:45:11.101062429 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.106794412 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.111739267 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.118727416 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.122976527 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.129377824 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.133236781 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.136587961 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.137510223 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.144365307 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.146951028 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.151496330 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.153469880 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.159072839 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.162019423 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.165770656 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.168258344 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.171878413 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.182501011 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.197460812 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.202531712 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.207975395 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.209652175 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.210188213 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.212561048 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 18:45:11.214047221 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+0: 512x640 1 person, 120.5ms
+Speed: 1.7ms preprocess, 120.5ms inference, 0.7ms postprocess per image at shape (1, 3, 512, 640)
+INFO:     127.0.0.1:58136 - "POST /identify HTTP/1.1" 200 OK
+INFO:     Started server process [4862]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+Backend URL: http://localhost:3000
+Device: cpu
+YOLO detector loaded.
+segment-anything not available.
+Falling back to default species list
+
+[W112 19:18:34.810353450 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.817931483 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.825911455 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.835097035 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.840574840 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.847740613 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.852323788 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.856179514 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.857136793 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.864024066 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.866709893 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.871380749 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.875670855 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.883738467 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.886908213 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.890868369 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.893660137 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.897397913 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.908586542 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.924903615 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.930309430 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.936713053 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.938821131 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.939368551 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.942557207 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W112 19:18:34.945608695 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+0: 512x640 1 person, 155.8ms
+Speed: 3.9ms preprocess, 155.8ms inference, 1.1ms postprocess per image at shape (1, 3, 512, 640)
+INFO:     127.0.0.1:55768 - "POST /identify HTTP/1.1" 200 OK
+INFO:     Started server process [138892]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+ERROR:    [Errno 98] error while attempting to bind on address ('0.0.0.0', 3000): address already in use
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+Backend URL: http://localhost:3000
+Device: cpu
+YOLO detector loaded.
+segment-anything not available.
+INFO:     Started server process [138963]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:3002 (Press CTRL+C to quit)
+Backend URL: http://localhost:3000
+Device: cpu
+YOLO detector loaded.
+segment-anything not available.
+Falling back to default species list
+
+[W115 16:45:39.578599167 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.585811935 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.593728590 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.603125697 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.608654119 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.616398662 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.620889544 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.624594469 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.625498478 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.632389693 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.635056298 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.639544200 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.643901581 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.652429351 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.655716863 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.659546999 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.662166903 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.665671906 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.676701569 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:39.692855951 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:40.698102711 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:40.704328859 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:40.706298358 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:40.706800452 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:40.709802891 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:45:40.712880980 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+0: 512x640 1 person, 157.3ms
+Speed: 4.5ms preprocess, 157.3ms inference, 1.7ms postprocess per image at shape (1, 3, 512, 640)
+INFO:     127.0.0.1:35828 - "POST /identify HTTP/1.1" 200 OK
+Falling back to default species list
+
+[W115 16:50:20.213492545 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.219035427 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.223649071 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.231276102 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.235383751 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.241420088 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.245201213 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.248563385 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.249415843 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.255385039 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.257503579 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.261554437 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.263225253 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.268074269 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.270831524 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.274247607 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.276692699 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.279929740 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.289594980 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.305228177 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.311390275 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.318404221 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.320782064 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.321397369 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.324358327 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+[W115 16:50:20.326295686 NNPACK.cpp:56] Could not initialize NNPACK! Reason: Unsupported hardware.
+0: 448x640 1 person, 1 dog, 125.0ms
+Speed: 1.9ms preprocess, 125.0ms inference, 2.2ms postprocess per image at shape (1, 3, 448, 640)
+INFO:     127.0.0.1:49718 - "POST /identify HTTP/1.1" 200 OK
+Command 'uvicorn' not found, but can be installed with:
+apt install uvicorn
+Command 'uvicorn' not found, but can be installed with:
+apt install uvicorn
+INFO:     Started server process [305822]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:3002 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [305822]
+Backend URL: http://localhost:3000
+Device: cpu
+YOLO detector loaded.
+segment-anything not available.
+INFO:     Started server process [305882]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:3002 (Press CTRL+C to quit)
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [305882]
+Backend URL: http://localhost:3000
+Device: cpu
+YOLO detector loaded.
+segment-anything not available.
