@@ -469,6 +469,64 @@ app.post("/upload", upload.single("image"), async (req, res) => {
   }
 });
 
+// ====================
+// Device Status & Time Sync
+// ====================
+
+// POST /daily_status - accept daily status from camera trap and forward to BFF
+app.post("/daily_status", express.json(), async (req, res) => {
+  try {
+    const {
+      trapId,
+      sd_free,
+      sd_used,
+      battery_voltage,
+      total_triggers_today,
+      failed_uploads,
+    } = req.body;
+
+    if (!trapId) {
+      return res.status(400).json({ error: "trapId required" });
+    }
+
+    // Forward to internal backend
+    if (process.env.BFF_DAILY_STATUS_URL) {
+      try {
+        const response = await axios.post(
+          process.env.BFF_DAILY_STATUS_URL,
+          req.body,
+          { timeout: 10000 }
+        );
+        console.log(`[daily_status] Forwarded to BFF for trap ${trapId}`);
+        return res.status(201).json(response.data);
+      } catch (fwdErr) {
+        console.error(
+          `[daily_status] Failed to forward for trap ${trapId}:`,
+          fwdErr.response?.data || fwdErr.message
+        );
+        return res.status(500).json({
+          error: "Failed to store daily status",
+          details: fwdErr.response?.data || fwdErr.message,
+        });
+      }
+    } else {
+      console.warn("[daily_status] BFF_DAILY_STATUS_URL not set; storing locally would go here");
+      return res.status(201).json({
+        message: "Daily status received (BFF forwarding disabled)",
+        trapId,
+      });
+    }
+  } catch (error) {
+    console.error("[daily_status] Error:", error);
+    res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+// GET /time_sync - return current UTC timestamp for camera trap time synchronization
+app.get("/time_sync", (req, res) => {
+  res.json({ timestamp: new Date().toISOString() });
+});
+
 // Health check
 app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
@@ -478,4 +536,10 @@ const PORT = process.env.PORT || 3003;
 app.listen(PORT, () => {
   console.log(`Camera Trap Backend (ESM) running on http://localhost:${PORT}`);
   console.log(`Ready to receive images`);
+  console.log(`\nAvailable endpoints:`);
+  console.log(`- POST /upload (image processing with aggregation)`);
+  console.log(`- POST /daily_status (device status forwarding)`);
+  console.log(`- GET /time_sync (UTC timestamp for CT time sync)`);
+  console.log(`- GET /health (health check)`);
+  console.log(`- GET /debug/aggregations (inspect active aggregations)`);
 });
