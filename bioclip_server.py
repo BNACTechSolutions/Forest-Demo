@@ -1,7 +1,7 @@
 # bioclip_server_improved.py
 import io
 import base64
-import json
+import logging
 from typing import List, Optional, Tuple
 from fastapi import FastAPI, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,9 +28,18 @@ except Exception:
     SAM_AVAILABLE = False
 
 app = FastAPI(title="BioCLIP Multi-Object Identification API")
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("bioclip_server")
+
+cors_origins_raw = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173")
+cors_origins = [origin.strip() for origin in cors_origins_raw.split(",") if origin.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -39,7 +48,10 @@ app.add_middleware(
 # Config / Backend URL
 # -------------------------
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:3000")
-print(f"Backend URL: {BACKEND_URL}")
+MAX_UPLOAD_MB = float(os.getenv("MAX_UPLOAD_MB", "15"))
+MAX_UPLOAD_BYTES = int(MAX_UPLOAD_MB * 1024 * 1024)
+Image.MAX_IMAGE_PIXELS = int(os.getenv("MAX_IMAGE_PIXELS", "120000000"))
+logger.info("Backend URL configured: %s", BACKEND_URL)
 
 # Default fallback list
 DEFAULT_SPECIES = ["Dog", "Cat", "Cow"]
@@ -50,7 +62,7 @@ candidate_species = DEFAULT_SPECIES
 # Load BioCLIP model
 # -------------------------
 device = "cuda" if torch.cuda.is_available() else "cpu"
-print("Device:", device)
+logger.info("Device: %s", device)
 
 model, preprocess_train, preprocess_val = open_clip.create_model_and_transforms('hf-hub:imageomics/bioclip-2')
 tokenizer = open_clip.get_tokenizer('hf-hub:imageomics/bioclip-2')
@@ -64,20 +76,20 @@ DETECTOR = None
 if MEGADETECTOR_AVAILABLE:
     try:
         DETECTOR = load_detector("models/md_v5a.0.0.pt")
-        print("MegaDetector v5 loaded successfully via megadetector package.")
-        print("MegaDetector classes: 1=Animal, 2=Person")
+        logger.info("MegaDetector v5 loaded successfully via megadetector package.")
+        logger.info("MegaDetector classes: 1=Animal, 2=Person")
     except Exception as e:
-        print("Failed to load MegaDetector model:", e)
-        print("Attempting fallback to direct path...")
+        logger.warning("Failed to load MegaDetector model from local path: %s", e)
+        logger.info("Attempting fallback to MDV5A identifier...")
         try:
             # Fallback to MDv5a default
             DETECTOR = load_detector("MDV5A")
-            print("MegaDetector v5 loaded via default MDV5A identifier.")
+            logger.info("MegaDetector v5 loaded via default MDV5A identifier.")
         except Exception as e2:
-            print("Fallback failed:", e2)
+            logger.error("MegaDetector fallback failed: %s", e2)
             DETECTOR = None
 else:
-    print("megadetector package not available. Install with: pip install megadetector")
+    logger.error("megadetector package not available. Install with: pip install megadetector")
 
 # -------------------------
 # Optional: SAM mask generator
@@ -90,11 +102,11 @@ if SAM_AVAILABLE:
         sam_model_type = "vit_b"
         SAM = sam_model_registry[sam_model_type](checkpoint=sam_checkpoint).to(device)
         SAM_MASK_GENERATOR = SamAutomaticMaskGenerator(SAM)
-        print("SAM loaded.")
+        logger.info("SAM loaded.")
     except Exception as e:
-        print("SAM not loaded.", e)
+        logger.warning("SAM not loaded: %s", e)
 else:
-    print("segment-anything not available.")
+    logger.info("segment-anything not available.")
 
 # -------------------------
 # Helpers
@@ -110,12 +122,12 @@ async def fetch_client_species(client_id: str) -> List[str]:
                 data = response.json()
                 species_list = [s.get("specieName") for s in data.get("supportedSpecies", [])]
                 if species_list:
-                    print(f"Loaded {len(species_list)} species from backend for client {client_id}")
+                    logger.info("Loaded %d species from backend for client %s", len(species_list), client_id)
                     return species_list
     except Exception as e:
-        print(f"Error fetching species from backend: {e}")
+        logger.warning("Error fetching species from backend: %s", e)
     
-    print(f"Falling back to default species list")
+    logger.info("Falling back to default species list")
     return DEFAULT_SPECIES
 
 def pil_from_bytes(b: bytes) -> Image.Image:
@@ -188,6 +200,65 @@ def preprocess_for_ir_night(pil_img: Image.Image) -> Image.Image:
     
     return img_rgb
 
+def _xywh_iou(box_a: List[float], box_b: List[float]) -> float:
+    """IoU for normalized MegaDetector boxes [x, y, w, h]."""
+    ax1, ay1, aw, ah = box_a
+    bx1, by1, bw, bh = box_b
+    ax2, ay2 = ax1 + aw, ay1 + ah
+    bx2, by2 = bx1 + bw, by1 + bh
+
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+
+    inter_w = max(0.0, inter_x2 - inter_x1)
+    inter_h = max(0.0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+
+    area_a = max(0.0, aw) * max(0.0, ah)
+    area_b = max(0.0, bw) * max(0.0, bh)
+    denom = area_a + area_b - inter_area
+    if denom <= 0:
+        return 0.0
+    return inter_area / denom
+
+def dedupe_md_detections(detections: List[dict], iou_threshold: float = 0.6) -> List[dict]:
+    """Deduplicate MegaDetector detections, keeping highest confidence overlaps per category."""
+    ordered = sorted(detections, key=lambda d: float(d.get("conf", 0.0)), reverse=True)
+    kept: List[dict] = []
+
+    for det in ordered:
+        det_cat = str(det.get("category", ""))
+        det_bbox = det.get("bbox", None)
+        if not det_bbox or len(det_bbox) != 4:
+            continue
+
+        duplicate = False
+        for kept_det in kept:
+            kept_cat = str(kept_det.get("category", ""))
+            if det_cat != kept_cat:
+                continue
+            kept_bbox = kept_det.get("bbox", None)
+            if not kept_bbox or len(kept_bbox) != 4:
+                continue
+            if _xywh_iou(det_bbox, kept_bbox) >= iou_threshold:
+                duplicate = True
+                break
+
+        if not duplicate:
+            kept.append(det)
+
+    return kept
+
+def is_low_information_crop(pil_crop: Image.Image, std_threshold: float = 10.0, dark_threshold: float = 18.0) -> bool:
+    """Reject mostly-black/flat crops that cause false species predictions."""
+    gray = pil_crop.convert("L")
+    arr = np.array(gray, dtype=np.float32)
+    if arr.size == 0:
+        return True
+    return float(arr.std()) < std_threshold or float(arr.mean()) < dark_threshold
+
 # -------------------------
 # Response models
 # -------------------------
@@ -213,8 +284,10 @@ async def identify(
     client_id: str = Form(None),
     run_sam: bool = Form(False),
     detector_threshold: float = Form(0.35),
-    poacher_threshold: float = Form(0.25),  # Lower threshold for critical poacher detection
-    species_confidence_threshold: float = Form(0.3),
+    poacher_threshold: float = Form(0.15),
+    species_confidence_threshold: float = Form(0.7),
+    species_margin_threshold: float = Form(0.15),
+    low_info_std_threshold: float = Form(10.0),
     topk_species: int = Form(5),
 ):
     """
@@ -225,8 +298,10 @@ async def identify(
     - client_id: Client ID to fetch their supported species
     - run_sam: Whether to run SAM mask generator
     - detector_threshold: Minimum MegaDetector confidence for animals (default 0.35)
-    - poacher_threshold: Minimum confidence for person detection (default 0.25 - no poacher missed!)
-    - species_confidence_threshold: Minimum BioCLIP confidence for animal species (default 0.3)
+    - poacher_threshold: Minimum confidence for person detection (default 0.15 - high recall)
+    - species_confidence_threshold: Minimum BioCLIP confidence for animal species (default 0.7)
+    - species_margin_threshold: Top1-Top2 confidence gap for species acceptance (default 0.15)
+    - low_info_std_threshold: Reject low-detail crops before species classification (default 10.0)
     
     MegaDetector classes: 1=Animal, 2=Person
     """
@@ -234,8 +309,24 @@ async def identify(
     allowed_species_list = candidate_species
     if client_id:
         allowed_species_list = await fetch_client_species(client_id)
+
+    # Basic production input validation
+    if not file.filename:
+        return IdentifyResponse(detections=[], warnings=["No file provided."])
+    if file.content_type not in {"image/jpeg", "image/jpg", "image/png", "image/webp"}:
+        return IdentifyResponse(detections=[], warnings=["Unsupported file type. Use jpg/png/webp."])
+
+    detector_threshold = min(max(float(detector_threshold), 0.05), 1.0)
+    poacher_threshold = min(max(float(poacher_threshold), 0.05), 1.0)
+    species_confidence_threshold = min(max(float(species_confidence_threshold), 0.5), 1.0)
+    species_margin_threshold = min(max(float(species_margin_threshold), 0.05), 0.5)
+    low_info_std_threshold = min(max(float(low_info_std_threshold), 2.0), 30.0)
+    topk_species = int(min(max(int(topk_species), 3), 10))
     
     img_bytes = await file.read()
+    if len(img_bytes) > MAX_UPLOAD_BYTES:
+        return IdentifyResponse(detections=[], warnings=[f"File too large. Max {MAX_UPLOAD_MB} MB."])
+
     pil_img = pil_from_bytes(img_bytes)
     img_w, img_h = pil_img.size
 
@@ -250,17 +341,17 @@ async def identify(
     # Preprocess for IR/Night images: enhance contrast and normalize
     pil_img_processed = preprocess_for_ir_night(pil_img)
     
-    # Run MegaDetector v5 - convert PIL to numpy array
+    # Run MegaDetector v5 in dual-pass mode (original + enhanced) for better person recall
     try:
-        # Convert to numpy array for MegaDetector
-        img_array = np.array(pil_img_processed)
-        
-        # MegaDetector API: generate_detections_one_image returns dict with 'detections' list
-        result = DETECTOR.generate_detections_one_image(img_array)
-        
-        # Parse MegaDetector output format
-        # Each detection: {'category': '1', 'conf': 0.95, 'bbox': [x, y, w, h]}
-        detections_list = result.get('detections', [])
+        img_array_original = np.array(pil_img)
+        img_array_processed = np.array(pil_img_processed)
+
+        result_original = DETECTOR.generate_detections_one_image(img_array_original)
+        result_processed = DETECTOR.generate_detections_one_image(img_array_processed)
+
+        detections_original = result_original.get('detections', [])
+        detections_processed = result_processed.get('detections', [])
+        detections_list = dedupe_md_detections(detections_original + detections_processed)
         
         if not detections_list:
             warnings.append("No persons or animals detected in image.")
@@ -300,7 +391,7 @@ async def identify(
                     valid_boxes.append((box, conf, "animal", category))
                     
         except Exception as e:
-            print(f"Error parsing detection: {e}")
+            logger.warning("Error parsing MegaDetector detection: %s", e)
             continue
 
     # Check if we have valid detections after filtering
@@ -312,8 +403,7 @@ async def identify(
     person_count = sum(1 for _, _, label, _ in valid_boxes if label == "person")
     animal_count = sum(1 for _, _, label, _ in valid_boxes if label == "animal")
     
-    print(f"\n📊 MegaDetector Results: {len(valid_boxes)} total detections")
-    print(f"   👤 Persons: {person_count} | 🦁 Animals: {animal_count}")
+    logger.info("MegaDetector results: total=%d persons=%d animals=%d", len(valid_boxes), person_count, animal_count)
     
     # Optionally compute SAM masks
     sam_masks_by_box = {}
@@ -356,7 +446,7 @@ async def identify(
                 mask_png_base64=mask_to_base64_png(sam_masks_by_box[i]) if i in sam_masks_by_box else None
             )
             poacher_detections.append(det)
-            print(f"⚠️  CRITICAL: Person detected [{i+1}] with {det_conf:.2%} confidence")
+            logger.warning("CRITICAL person detected idx=%d conf=%.4f", i + 1, det_conf)
             continue
         
 
@@ -364,17 +454,30 @@ async def identify(
         # NOTE: ALL ANIMALS ARE PROCESSED REGARDLESS OF POACHER PRESENCE
         if label == "animal":
             crop = crop_pil(pil_img, box)  # Crop from ORIGINAL color image, not processed
+
+            if is_low_information_crop(crop, std_threshold=low_info_std_threshold):
+                warnings.append("Low-information animal crop rejected (likely empty/dark frame noise).")
+                continue
             
             try:
                 result = classify_with_bioclip(
                     crop, 
                     allowed_species=allowed_species_list, 
                     confidence_threshold=species_confidence_threshold, 
-                    topk=5
+                    topk=max(3, topk_species)
                 )
                 
                 if result is not None:
                     predicted_species, species_conf, all_topk = result
+                    top2_conf = all_topk[1][1] if len(all_topk) > 1 else 0.0
+                    conf_margin = species_conf - float(top2_conf)
+
+                    if conf_margin < species_margin_threshold:
+                        warnings.append(
+                            f"Animal species rejected due to low confidence margin "
+                            f"({conf_margin:.3f} < {species_margin_threshold})."
+                        )
+                        continue
                     
                     # Format top-k for response
                     topk_formatted = [{"species": s, "confidence": round(c, 4)} for s, c in all_topk[:3]]
@@ -389,44 +492,24 @@ async def identify(
                         bioclip_top3=topk_formatted
                     )
                     animal_detections.append(det)
-                    print(f"🦁 Animal detected [{i+1}]: {predicted_species} ({species_conf:.2%} confidence)")
+                    logger.info("Animal detected idx=%d species=%s conf=%.4f", i + 1, predicted_species, species_conf)
                 else:
-                    # Below confidence threshold - still report as unclassified animal
-                    det = Detection(
-                        bbox=[x1, y1, x2, y2],
-                        label="animal",
-                        detector_confidence=det_conf,
-                        species="UNKNOWN_ANIMAL",
-                        species_confidence=0.0,
-                        mask_png_base64=mask_to_base64_png(sam_masks_by_box[i]) if i in sam_masks_by_box else None
-                    )
-                    animal_detections.append(det)
-                    print(f"🦁 Animal detected [{i+1}]: UNKNOWN_ANIMAL (low confidence)")
+                    # Below confidence threshold - reject instead of forcing a random species
                     warnings.append(
                         f"Animal detected by MegaDetector but BioCLIP species confidence too low "
-                        f"(< {species_confidence_threshold}). Classified as UNKNOWN_ANIMAL."
+                        f"(< {species_confidence_threshold}). Detection dropped."
                     )
             
             except Exception as e:
                 warnings.append(f"BioCLIP classification failed for animal detection {i}: {e}")
-                print(f"❌ Animal detection [{i+1}] classification error: {e}")
-                # Still add detection as unknown animal - NO ANIMAL MISSED!
-                det = Detection(
-                    bbox=[x1, y1, x2, y2],
-                    label="animal",
-                    detector_confidence=det_conf,
-                    species="CLASSIFICATION_FAILED",
-                    species_confidence=0.0,
-                    mask_png_base64=mask_to_base64_png(sam_masks_by_box[i]) if i in sam_masks_by_box else None
-                )
-                animal_detections.append(det)
+                logger.warning("Animal detection classification error idx=%d err=%s", i + 1, e)
+                continue
 
     # Combine detections in priority order: POACHERS FIRST, then animals
     detections_out = poacher_detections + animal_detections
     
     # Log final summary
-    print(f"\n✅ Processing complete: {len(poacher_detections)} poacher(s), "
-          f"{len(animal_detections)} animal(s)")
+    logger.info("Processing complete: persons=%d animals=%d", len(poacher_detections), len(animal_detections))
     
     return IdentifyResponse(detections=detections_out, warnings=warnings)
 
@@ -436,7 +519,5 @@ async def identify(
 # -------------------------
 if __name__ == "__main__":
     import uvicorn
-    print("\n🚀 Starting BioCLIP Poacher Detection Server...")
-    print("📡 Server will be available at: http://localhost:8000")
-    print("📖 API docs at: http://localhost:8000/docs")
+    logger.info("Starting BioCLIP Poacher Detection Server on http://0.0.0.0:8000")
     uvicorn.run(app, host="0.0.0.0", port=8000)

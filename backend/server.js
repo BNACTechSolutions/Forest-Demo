@@ -30,6 +30,7 @@ app.use(cors());
 // Aggregation config
 // ====================
 const AGGREGATION_WINDOW_MS = 60 * 1000; // 1 minute
+const AGGREGATION_EXTEND_MS = 30 * 1000; // extend window by 30s per incoming image
 const MAX_IMAGES_PER_EVENT = 5;
 const aggregations = new Map(); // trapId -> { images: [], timer }
 
@@ -188,13 +189,30 @@ const finalizeAggregation = async (trapId) => {
 
 const addImageToAggregation = (trapId, clientInfo, perImage) => {
   let agg = aggregations.get(trapId);
+  const now = Date.now();
+
+  const scheduleFinalization = (aggregation) => {
+    const delayMs = Math.max((aggregation.finalizeAt || now) - Date.now(), 0);
+    aggregation.timer = setTimeout(() => finalizeAggregation(trapId), delayMs);
+  };
+
   if (!agg) {
-    agg = { images: [], timer: null };
-    agg.timer = setTimeout(() => finalizeAggregation(trapId), AGGREGATION_WINDOW_MS);
+    agg = {
+      images: [],
+      timer: null,
+      finalizeAt: now + AGGREGATION_WINDOW_MS,
+    };
     aggregations.set(trapId, agg);
+    scheduleFinalization(agg);
+  } else {
+    agg.finalizeAt = (agg.finalizeAt || now) + AGGREGATION_EXTEND_MS;
+    clearTimeout(agg.timer);
+    scheduleFinalization(agg);
   }
+
   agg.images.push({ clientInfo, ...perImage });
-  console.log(`addImageToAggregation: trap=${trapId} images=${agg.images.length}`);
+  const secondsRemaining = Math.max(Math.round((agg.finalizeAt - Date.now()) / 1000), 0);
+  console.log(`addImageToAggregation: trap=${trapId} images=${agg.images.length} flushIn=${secondsRemaining}s`);
   if (agg.images.length >= MAX_IMAGES_PER_EVENT) {
     clearTimeout(agg.timer);
     // finalize asynchronously
