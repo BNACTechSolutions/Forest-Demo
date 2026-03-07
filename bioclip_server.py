@@ -251,6 +251,27 @@ def dedupe_md_detections(detections: List[dict], iou_threshold: float = 0.6) -> 
 
     return kept
 
+def _xyxy_iou(box_a: List[float], box_b: List[float]) -> float:
+    """IoU for pixel boxes [x1, y1, x2, y2]."""
+    ax1, ay1, ax2, ay2 = box_a
+    bx1, by1, bx2, by2 = box_b
+
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+
+    inter_w = max(0.0, inter_x2 - inter_x1)
+    inter_h = max(0.0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    denom = area_a + area_b - inter_area
+    if denom <= 0:
+        return 0.0
+    return inter_area / denom
+
 def is_low_information_crop(pil_crop: Image.Image, std_threshold: float = 10.0, dark_threshold: float = 18.0) -> bool:
     """Reject mostly-black/flat crops that cause false species predictions."""
     gray = pil_crop.convert("L")
@@ -288,6 +309,7 @@ async def identify(
     species_confidence_threshold: float = Form(0.7),
     species_margin_threshold: float = Form(0.15),
     low_info_std_threshold: float = Form(10.0),
+    person_overlap_suppress_iou: float = Form(0.55),
     topk_species: int = Form(5),
 ):
     """
@@ -321,6 +343,7 @@ async def identify(
     species_confidence_threshold = min(max(float(species_confidence_threshold), 0.5), 1.0)
     species_margin_threshold = min(max(float(species_margin_threshold), 0.05), 0.5)
     low_info_std_threshold = min(max(float(low_info_std_threshold), 2.0), 30.0)
+    person_overlap_suppress_iou = min(max(float(person_overlap_suppress_iou), 0.2), 0.95)
     topk_species = int(min(max(int(topk_species), 3), 10))
     
     img_bytes = await file.read()
@@ -398,6 +421,26 @@ async def identify(
     if not valid_boxes:
         warnings.append("No persons or animals detected above confidence thresholds.")
         return IdentifyResponse(detections=[], warnings=warnings)
+
+    person_boxes = [box for (box, _, label, _) in valid_boxes if label == "person"]
+
+    filtered_valid_boxes = []
+    suppressed_animals = 0
+    for box, conf, label, category in valid_boxes:
+        if label == "animal" and person_boxes:
+            max_iou = max(_xyxy_iou(box, pbox) for pbox in person_boxes)
+            if max_iou >= person_overlap_suppress_iou:
+                suppressed_animals += 1
+                continue
+        filtered_valid_boxes.append((box, conf, label, category))
+
+    valid_boxes = filtered_valid_boxes
+
+    if suppressed_animals > 0:
+        warnings.append(
+            f"Suppressed {suppressed_animals} animal detection(s) due to high overlap with person boxes "
+            f"(IoU >= {person_overlap_suppress_iou:.2f})."
+        )
 
     # Count detection types for comprehensive reporting
     person_count = sum(1 for _, _, label, _ in valid_boxes if label == "person")
