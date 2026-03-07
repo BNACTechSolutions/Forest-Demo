@@ -30,7 +30,7 @@ app.use(cors());
 // Aggregation config
 // ====================
 const AGGREGATION_WINDOW_MS = 60 * 1000; // 1 minute
-const AGGREGATION_EXTEND_MS = 30 * 1000; // extend window by 30s per incoming image
+const AGGREGATION_EXTEND_MS = 60 * 1000; // extend window by 1 minute per incoming image
 const MAX_IMAGES_PER_EVENT = 5;
 const aggregations = new Map(); // trapId -> { images: [], timer }
 
