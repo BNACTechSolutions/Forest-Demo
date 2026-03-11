@@ -32,7 +32,12 @@ app.use(cors());
 const AGGREGATION_WINDOW_MS = 60 * 1000; // 1 minute
 const AGGREGATION_EXTEND_MS = 60 * 1000; // extend window by 1 minute per incoming image
 const MAX_IMAGES_PER_EVENT = 5;
+const UPLOAD_ACK_IMMEDIATE = String(process.env.UPLOAD_ACK_IMMEDIATE || "false").toLowerCase() === "true";
+const AI_PROCESS_RETRIES = Number(process.env.AI_PROCESS_RETRIES || process.env.UPLOAD_PROCESS_RETRIES || 2);
+const UPLOAD_RETRY_DELAY_MS = Number(process.env.UPLOAD_RETRY_DELAY_MS || 5000);
 const aggregations = new Map(); // trapId -> { images: [], timer }
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const finalizeAggregation = async (trapId) => {
   const agg = aggregations.get(trapId);
@@ -258,76 +263,68 @@ const uploadToCloudinary = (buffer, originalName, trapId) => {
 // ====================
 // Main Route
 // ====================
-app.post("/upload", upload.single("image"), async (req, res) => {
-  try {
-    const serverReceiptTime = new Date().toISOString(); // Capture when request arrives
-    const { trapId, captureTime, temperature, metadata } = req.body;
-    const file = req.file;
+const processUploadImage = async ({ trapId, captureTime, temperature, metadata, fileBuffer, fileName, serverReceiptTime }) => {
+  console.log('Timings for hardware: ', metadata);
 
-    if (!trapId || !captureTime || !file) {
-      return res.status(400).json({
-        error: "Missing required fields: trapId, captureTime, image",
-      });
+  // 1. Parse temperature
+  const tempValue = temperature ? parseFloat(temperature) : null;
+
+  // 2. Parse detailed timing metadata
+  let timing = {};
+  let metadataParseError = null;
+
+  if (metadata) {
+    try {
+      const parsed = JSON.parse(metadata);
+      timing = {
+        triggerTime: parsed.triggerTime || null,
+        captureTimeDevice: parsed.captureTime || null,
+        pppStartTime: parsed.pppStartTime || null,
+        pppConnectedTime: parsed.pppConnectedTime || null,
+      };
+    } catch (e) {
+      console.warn("Failed to parse metadata JSON:", e.message);
+      metadataParseError = e.message;
     }
+  }
 
-    console.log('Timings for hardware: ', metadata);
+  // Step 1: Client lookup
+  const { data: clientInfo } = await axios.post(
+    process.env.BFF_CLIENT_LOOKUP_URL,
+    { trapId },
+    { timeout: 8000 }
+  );
 
-    // 1. Parse temperature
-    const tempValue = temperature ? parseFloat(temperature) : null;
+  if (!clientInfo?.clientId) {
+    throw new Error("Client not found for trapId");
+  }
 
-    // 2. Parse detailed timing metadata
-    let timing = {};
-    let metadataParseError = null;
+  // Step 2: Cloudinary upload
+  const clResult = await uploadToCloudinary(fileBuffer, fileName, trapId);
+  const cloudinaryUploadTime = new Date().toISOString();
+  const imageUrl = clResult.secure_url;
+  const publicId = clResult.public_id;
+  const thumbnailUrl = cloudinary.url(publicId, {
+    secure: true,
+    transformation: { width: 800, height: 600, crop: "limit", fetch_format: "auto" },
+  });
 
-    if (metadata) {
-      try {
-        const parsed = JSON.parse(metadata);
-        timing = {
-          triggerTime: parsed.triggerTime || null,
-          captureTimeDevice: parsed.captureTime || null,     // renamed for clarity
-          pppStartTime: parsed.pppStartTime || null,
-          pppConnectedTime: parsed.pppConnectedTime || null,
-        };
-      } catch (e) {
-        console.warn("Failed to parse metadata JSON:", e.message);
-        metadataParseError = e.message;
-      }
-    }
+  // Step 3: AI inference with retry loop (retries AI only, not Cloudinary upload)
+  let aiResponse = null;
+  let aiError = null;
+  const maxAiAttempts = Math.max(1, AI_PROCESS_RETRIES + 1);
+  const aiRequestSentAt = new Date().toISOString();
+  let aiResponseReceivedAt = null;
+  let aiTimings = null;
 
-    // Step 1: Client lookup (unchanged)
-    const { data: clientInfo } = await axios.post(
-      process.env.BFF_CLIENT_LOOKUP_URL,
-      { trapId },
-      { timeout: 8000 }
-    );
-
-    if (!clientInfo?.clientId) {
-      return res.status(404).json({ error: "Client not found for trapId" });
-    }
-
-    // Step 2: Cloudinary upload (record time)
-    // Note: serverReceiptTime is when the request arrived at this server
-    const clResult = await uploadToCloudinary(file.buffer, file.originalname, trapId);
-    const cloudinaryUploadTime = new Date().toISOString();
-    const imageUrl = clResult.secure_url;
-    const publicId = clResult.public_id;
-    const thumbnailUrl = cloudinary.url(publicId, {
-      secure: true,
-      transformation: { width: 800, height: 600, crop: "limit", fetch_format: "auto" },
-    });
-
-    // Step 3: AI inference (record timings)
+  for (let attempt = 1; attempt <= maxAiAttempts; attempt += 1) {
     const form = new FormData();
-    form.append("file", file.buffer, file.originalname || "capture.jpg");
+    form.append("file", fileBuffer, fileName || "capture.jpg");
     form.append("client_id", clientInfo.clientId);
     form.append("run_sam", "false");
     form.append("detector_threshold", "0.30");
     form.append("topk_species", "3");
-    console.log(process.env.AI_SERVER_URL);
-    let aiResponse;
-    const aiRequestSentAt = new Date().toISOString();
-    let aiResponseReceivedAt = null;
-    let aiTimings = null;
+
     try {
       aiResponse = await axios.post(process.env.AI_SERVER_URL, form, {
         headers: form.getHeaders(),
@@ -338,149 +335,151 @@ app.post("/upload", upload.single("image"), async (req, res) => {
         requestSentAt: aiRequestSentAt,
         responseReceivedAt: aiResponseReceivedAt,
         durationMs: new Date(aiResponseReceivedAt) - new Date(aiRequestSentAt),
-        status: 'ok'
+        status: 'ok',
+        attempts: attempt,
       };
-    } catch (aiErr) {
-      aiResponseReceivedAt = new Date().toISOString();
-      aiTimings = {
-        requestSentAt: aiRequestSentAt,
-        responseReceivedAt: aiResponseReceivedAt,
-        durationMs: new Date(aiResponseReceivedAt) - new Date(aiRequestSentAt),
-        status: 'error',
-        error: aiErr.response?.data || aiErr.message
-      };
-      console.error('AI call failed:', aiErr?.response?.data || aiErr.message || aiErr);
-      // Continue but set empty detections and add a warning
-      aiResponse = { data: { detections: [], warnings: [(aiErr.response?.data || aiErr.message || 'AI error').toString()] } };
+      break;
+    } catch (err) {
+      aiError = err;
+      const lastAttempt = attempt === maxAiAttempts;
+      console.error(`[ai] attempt ${attempt}/${maxAiAttempts} failed for trap ${trapId}:`, err?.response?.data || err?.message || err);
+      if (!lastAttempt) {
+        await sleep(UPLOAD_RETRY_DELAY_MS * attempt);
+      }
+    }
+  }
+
+  if (!aiResponse) {
+    aiResponseReceivedAt = new Date().toISOString();
+    aiTimings = {
+      requestSentAt: aiRequestSentAt,
+      responseReceivedAt: aiResponseReceivedAt,
+      durationMs: new Date(aiResponseReceivedAt) - new Date(aiRequestSentAt),
+      status: 'error',
+      attempts: maxAiAttempts,
+      error: aiError?.response?.data || aiError?.message || 'AI error',
+    };
+    aiResponse = { data: { detections: [], warnings: [String(aiTimings.error)] } };
+  }
+
+  const { detections = [], warnings = [] } = aiResponse.data;
+  const processingTime = new Date().toISOString();
+
+  const calculateDelayMs = (start, end) => {
+    if (!start || !end) return null;
+    try {
+      const startDate = new Date(start);
+      const endDate = new Date(end);
+      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return null;
+      const diffMs = endDate - startDate;
+      if (diffMs < 0 || diffMs > 3600000) return null;
+      return Math.round(diffMs / 1000 * 10) / 10;
+    } catch {
+      return null;
+    }
+  };
+
+  const delays = {
+    triggerToCapture: calculateDelayMs(timing.triggerTime, timing.captureTimeDevice),
+    captureToPppStart: calculateDelayMs(timing.captureTimeDevice, timing.pppStartTime),
+    pppStartToConnected: calculateDelayMs(timing.pppStartTime, timing.pppConnectedTime),
+    pppConnectedToProcessing: calculateDelayMs(timing.pppConnectedTime, processingTime),
+    totalDeviceToProcessing: calculateDelayMs(timing.triggerTime, processingTime),
+  };
+
+  // Queue image into per-trap aggregation for final event write.
+  addImageToAggregation(trapId, clientInfo, {
+    captureTime,
+    processingTime,
+    serverReceiptTime,
+    processingStartTime: aiRequestSentAt,
+    imageUrl,
+    publicId,
+    thumbnailUrl,
+    detectionsRaw: detections,
+    warnings,
+    metadataParseError,
+    temperature: tempValue,
+    processingDelaySeconds: delays.totalDeviceToProcessing,
+    deviceTimings: {
+      triggerTime: timing.triggerTime,
+      captureTimeDevice: timing.captureTimeDevice,
+      pppStartTime: timing.pppStartTime,
+      pppConnectedTime: timing.pppConnectedTime,
+    },
+    aiTimings: aiTimings || null,
+    processingStages: {
+      cloudinaryUploadTime: cloudinaryUploadTime || null,
+      aiRequestSentAt: aiRequestSentAt || null,
+      aiResponseReceivedAt: aiResponseReceivedAt || null,
+    },
+  });
+
+  return {
+    imageUrl,
+    detections: detections.length,
+    processingDelaySeconds: delays.totalDeviceToProcessing ?? Math.round((aiTimings?.durationMs || 0) / 1000),
+    timingFeedback: {
+      totalDelay: delays.totalDeviceToProcessing ?? Math.round((aiTimings?.durationMs || 0) / 1000),
+      pppConnectionTime: delays.pppStartToConnected,
+    },
+  };
+};
+
+app.post("/upload", upload.single("image"), async (req, res) => {
+  try {
+    const serverReceiptTime = new Date().toISOString();
+    const { trapId, captureTime, temperature, metadata } = req.body;
+    const file = req.file;
+
+    if (!trapId || !captureTime || !file) {
+      return res.status(400).json({
+        error: "Missing required fields: trapId, captureTime, image",
+      });
     }
 
-    const { detections = [], warnings = [] } = aiResponse.data;
-
-    // ── New: Calculate detailed delays ──────────────────────────────────────
-    const now = new Date();
-    const processingTime = now.toISOString();
-
-    const calculateDelayMs = (start, end) => {
-      if (!start || !end) return null;
-      try {
-        const startDate = new Date(start);
-        const endDate = new Date(end);
-        if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return null;
-        
-        const diffMs = endDate - startDate;
-        // Reject unrealistic delays (negative or > 1 hour)
-        // This prevents 1970 timestamps from creating huge delays
-        if (diffMs < 0 || diffMs > 3600000) return null;
-        
-        return Math.round(diffMs / 1000 * 10) / 10; // 0.1s precision
-      } catch {
-        return null;
-      }
-    };
-
-    const delays = {
-      triggerToCapture: calculateDelayMs(timing.triggerTime, timing.captureTimeDevice),
-      captureToPppStart: calculateDelayMs(timing.captureTimeDevice, timing.pppStartTime),
-      pppStartToConnected: calculateDelayMs(timing.pppStartTime, timing.pppConnectedTime),
-      pppConnectedToProcessing: calculateDelayMs(timing.pppConnectedTime, processingTime),
-      totalDeviceToProcessing: calculateDelayMs(timing.triggerTime, processingTime),
-    };
-
-    // Step 4: Final payload
-    const finalPayload = {
+    const job = {
       trapId,
-      captureTime,                    // the one sent in form field (filename based)
-      processingTime,
-      processingDelaySeconds: delays.totalDeviceToProcessing ?? null,
-
-      // New timing information
-      deviceTimings: {
-        triggerTime: timing.triggerTime,
-        captureTimeDevice: timing.captureTimeDevice,
-        pppStartTime: timing.pppStartTime,
-        pppConnectedTime: timing.pppConnectedTime,
-      },
-      calculatedDelaysSeconds: delays,
-      aiTimings: aiTimings || null,
-      processingStages: {
-        cloudinaryUploadTime: cloudinaryUploadTime || null,
-        aiRequestSentAt: aiRequestSentAt || null,
-        aiResponseReceivedAt: aiResponseReceivedAt || null,
-      },
-
-      temperature: tempValue,
-
-      // Client info
-      clientId: clientInfo.clientId,
-      clientName: clientInfo.clientName || null,
-      location: clientInfo.location || null,
-      project: clientInfo.project || null,
-
-      // Image
-      imageUrl,
-      publicId,
-      thumbnailUrl,
-
-      // AI
-      totalDetections: detections.length,
-      detections: detections.map(det => ({
-        species: det.species || "Unknown",
-        confidence: det.species_confidence ? Number(det.species_confidence.toFixed(4)) : null,
-        detectorConfidence: Number(det.detector_confidence?.toFixed(4)),
-        bbox: det.bbox,
-        label: det.label,
-        maskUrl: det.mask_png_base64 || null,
-        topk: det.extra?.topk || null,
-      })),
-
-      warnings,
-      metadataParseError, // only present if parsing failed
+      captureTime,
+      temperature,
+      metadata,
+      fileBuffer: Buffer.from(file.buffer),
+      fileName: file.originalname || "capture.jpg",
+      serverReceiptTime,
     };
 
-    // Queue this image's result into the per-trap aggregator. Final storage
-    // will happen once the event window completes or max images reached.
-    addImageToAggregation(trapId, clientInfo, {
-      captureTime,
-      processingTime,
-      serverReceiptTime,  // When server received the request
-      processingStartTime: aiRequestSentAt,
-      imageUrl,
-      publicId,
-      thumbnailUrl,
-      detectionsRaw: detections,
-      warnings,
-      metadataParseError,
-      temperature: tempValue,
-      processingDelaySeconds: delays.totalDeviceToProcessing,
-      deviceTimings: {
-        triggerTime: timing.triggerTime,
-        captureTimeDevice: timing.captureTimeDevice,
-        pppStartTime: timing.pppStartTime,
-        pppConnectedTime: timing.pppConnectedTime,
-      },
-      aiTimings: aiTimings || null,
-      processingStages: {
-        cloudinaryUploadTime: cloudinaryUploadTime || null,
-        aiRequestSentAt: aiRequestSentAt || null,
-        aiResponseReceivedAt: aiResponseReceivedAt || null,
-      },
-    });
+    if (UPLOAD_ACK_IMMEDIATE) {
+      res.status(202).json({
+        status: "accepted",
+        message: "Image accepted for background processing",
+        trapId,
+        captureTime,
+      });
 
-    // Response to device (per-image)
-    res.json({
+      setImmediate(async () => {
+        try {
+          const result = await processUploadImage(job);
+          console.log(`[upload-bg] completed for trap ${trapId}`, { detections: result.detections, imageUrl: result.imageUrl });
+        } catch (error) {
+          console.error(`[upload-bg] failed permanently for trap ${trapId}:`, error.response?.data || error.message || error);
+        }
+      });
+
+      return;
+    }
+
+    const result = await processUploadImage(job);
+    return res.json({
       status: "success",
       message: "Image processed and queued",
-      imageUrl,
-      detections: finalPayload.totalDetections,
-      processingDelaySeconds: delays.totalDeviceToProcessing ?? Math.round((aiTimings?.durationMs || 0) / 1000),
-      timingFeedback: {
-        totalDelay: delays.totalDeviceToProcessing ?? Math.round((aiTimings?.durationMs || 0) / 1000),
-        pppConnectionTime: delays.pppStartToConnected
-      }
+      imageUrl: result.imageUrl,
+      detections: result.detections,
+      processingDelaySeconds: result.processingDelaySeconds,
+      timingFeedback: result.timingFeedback,
     });
   } catch (error) {
     console.error("Upload processing failed:", error);
-    res.status(500).json({
+    return res.status(500).json({
       error: "Processing failed",
       details: error.response?.data || error.message,
     });
@@ -554,6 +553,7 @@ const PORT = process.env.PORT || 3003;
 app.listen(PORT, () => {
   console.log(`Camera Trap Backend (ESM) running on http://localhost:${PORT}`);
   console.log(`Ready to receive images`);
+  console.log(`Upload ACK mode: ${UPLOAD_ACK_IMMEDIATE ? "async (202 + background)" : "sync (wait for AI)"}`);
   console.log(`\nAvailable endpoints:`);
   console.log(`- POST /upload (image processing with aggregation)`);
   console.log(`- POST /daily_status (device status forwarding)`);
