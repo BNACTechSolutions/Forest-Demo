@@ -30,20 +30,31 @@ app.use(cors());
 // Aggregation config
 // ====================
 const AGGREGATION_WINDOW_MS = 60 * 1000; // 1 minute
-const AGGREGATION_EXTEND_MS = 60 * 1000; // extend window by 1 minute per incoming image
 const MAX_IMAGES_PER_EVENT = 5;
 const UPLOAD_ACK_IMMEDIATE = String(process.env.UPLOAD_ACK_IMMEDIATE || "false").toLowerCase() === "true";
 const AI_PROCESS_RETRIES = Number(process.env.AI_PROCESS_RETRIES || process.env.UPLOAD_PROCESS_RETRIES || 2);
 const UPLOAD_RETRY_DELAY_MS = Number(process.env.UPLOAD_RETRY_DELAY_MS || 5000);
-const aggregations = new Map(); // trapId -> { images: [], timer }
+const HUMAN_INTERVENTION_WARNING = 'HUMAN_INTERVENTION_REQUIRED: AI processing failed for this image set. Please review images manually and confirm priority.';
+const aggregations = new Map(); // aggKey (trapId:clientId:triggerTime) -> { trapId, images: [], timer }
+const inFlightUploads = new Map(); // uploadKey -> { trapId, clientId, captureTime, startedAt, stage }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const finalizeAggregation = async (trapId) => {
-  const agg = aggregations.get(trapId);
+const lookupTrapClientInfo = async (trapId) => {
+  const { data: clientInfo } = await axios.post(
+    process.env.BFF_CLIENT_LOOKUP_URL,
+    { trapId },
+    { timeout: 8000 }
+  );
+  return clientInfo;
+};
+
+const finalizeAggregation = async (aggKey) => {
+  const agg = aggregations.get(aggKey);
   if (!agg) return;
+  const trapId = agg.trapId;
   clearTimeout(agg.timer);
-  console.log(`finalizeAggregation: starting for trap ${trapId} (images=${agg.images.length})`);
+  console.log(`finalizeAggregation: starting for key=${aggKey} trap=${trapId} (images=${agg.images.length})`);
   try {
     const images = agg.images;
     if (!images.length) return;
@@ -185,50 +196,74 @@ const finalizeAggregation = async (trapId) => {
       }
     }
   } catch (err) {
-    console.error('Failed to finalize aggregation for', trapId, err?.response?.data || err.message || err);
+    console.error('Failed to finalize aggregation for', aggKey, err?.response?.data || err.message || err);
   } finally {
-    aggregations.delete(trapId);
-    console.log(`finalizeAggregation: finished for trap ${trapId}`);
+    aggregations.delete(aggKey);
+    console.log(`finalizeAggregation: finished for key=${aggKey} trap=${trapId}`);
   }
 };
 
-const addImageToAggregation = (trapId, clientInfo, perImage) => {
-  let agg = aggregations.get(trapId);
+const addImageToAggregation = (aggKey, trapId, clientInfo, perImage) => {
+  let agg = aggregations.get(aggKey);
   const now = Date.now();
 
   const scheduleFinalization = (aggregation) => {
     const delayMs = Math.max((aggregation.finalizeAt || now) - Date.now(), 0);
-    aggregation.timer = setTimeout(() => finalizeAggregation(trapId), delayMs);
+    aggregation.timer = setTimeout(() => finalizeAggregation(aggKey), delayMs);
   };
 
   if (!agg) {
     agg = {
+      trapId,
       images: [],
       timer: null,
       finalizeAt: now + AGGREGATION_WINDOW_MS,
     };
-    aggregations.set(trapId, agg);
+    aggregations.set(aggKey, agg);
     scheduleFinalization(agg);
   } else {
-    agg.finalizeAt = (agg.finalizeAt || now) + AGGREGATION_EXTEND_MS;
+    // Reset finalization to 1 minute from the latest received image.
+    agg.finalizeAt = Date.now() + AGGREGATION_WINDOW_MS;
     clearTimeout(agg.timer);
     scheduleFinalization(agg);
   }
 
   agg.images.push({ clientInfo, ...perImage });
   const secondsRemaining = Math.max(Math.round((agg.finalizeAt - Date.now()) / 1000), 0);
-  console.log(`addImageToAggregation: trap=${trapId} images=${agg.images.length} flushIn=${secondsRemaining}s`);
+  console.log(`addImageToAggregation: key=${aggKey} images=${agg.images.length} flushIn=${secondsRemaining}s`);
   if (agg.images.length >= MAX_IMAGES_PER_EVENT) {
     clearTimeout(agg.timer);
     // finalize asynchronously
-    setImmediate(() => finalizeAggregation(trapId));
+    setImmediate(() => finalizeAggregation(aggKey));
   }
 };
 
-// Debug endpoint to inspect current aggregations (counts only)
+const getAggregationSnapshot = () => {
+  const aggregationData = Array.from(aggregations.entries()).map(([aggKey, agg]) => ({
+    aggKey,
+    trapId: agg.trapId,
+    count: agg.images.length,
+  }));
+  const inFlightData = Array.from(inFlightUploads.entries()).map(([uploadKey, info]) => ({
+    uploadKey,
+    ...info,
+  }));
+  return {
+    activeAggregationCount: aggregationData.length,
+    inFlightUploadCount: inFlightData.length,
+    aggregations: aggregationData,
+    inFlightUploads: inFlightData,
+  };
+};
+
+// Debug endpoint to inspect current aggregations and in-flight uploads
 app.get('/debug/aggregations', (req, res) => {
-  const data = Array.from(aggregations.entries()).map(([trapId, agg]) => ({ trapId, count: agg.images.length }));
-  res.json({ count: data.length, aggregations: data });
+  res.json(getAggregationSnapshot());
+});
+
+// Alias endpoint for convenience
+app.get('/aggregations', (req, res) => {
+  res.json(getAggregationSnapshot());
 });
 
 // ====================
@@ -263,7 +298,7 @@ const uploadToCloudinary = (buffer, originalName, trapId) => {
 // ====================
 // Main Route
 // ====================
-const processUploadImage = async ({ trapId, captureTime, temperature, metadata, fileBuffer, fileName, serverReceiptTime }) => {
+const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, temperature, metadata, fileBuffer, fileName, serverReceiptTime, validatedClientInfo }) => {
   console.log('Timings for hardware: ', metadata);
 
   // 1. Parse temperature
@@ -289,14 +324,14 @@ const processUploadImage = async ({ trapId, captureTime, temperature, metadata, 
   }
 
   // Step 1: Client lookup
-  const { data: clientInfo } = await axios.post(
-    process.env.BFF_CLIENT_LOOKUP_URL,
-    { trapId },
-    { timeout: 8000 }
-  );
+  const clientInfo = validatedClientInfo || await lookupTrapClientInfo(trapId);
 
   if (!clientInfo?.clientId) {
     throw new Error("Client not found for trapId");
+  }
+
+  if (String(clientInfo.clientId) !== String(ctClientId)) {
+    throw new Error("Provided clientId does not match trap assignment");
   }
 
   // Step 2: Cloudinary upload
@@ -359,7 +394,7 @@ const processUploadImage = async ({ trapId, captureTime, temperature, metadata, 
       attempts: maxAiAttempts,
       error: aiError?.response?.data || aiError?.message || 'AI error',
     };
-    aiResponse = { data: { detections: [], warnings: [String(aiTimings.error)] } };
+    aiResponse = { data: { detections: [], warnings: [HUMAN_INTERVENTION_WARNING, String(aiTimings.error)] } };
   }
 
   const { detections = [], warnings = [] } = aiResponse.data;
@@ -387,8 +422,10 @@ const processUploadImage = async ({ trapId, captureTime, temperature, metadata, 
     totalDeviceToProcessing: calculateDelayMs(timing.triggerTime, processingTime),
   };
 
-  // Queue image into per-trap aggregation for final event write.
-  addImageToAggregation(trapId, clientInfo, {
+  // Queue image into per-trap+client+trigger aggregation for final event write.
+  const effectiveClientId = ctClientId;
+  const aggKey = `${trapId}:${effectiveClientId}:${timing.triggerTime}`;
+  addImageToAggregation(aggKey, trapId, clientInfo, {
     captureTime,
     processingTime,
     serverReceiptTime,
@@ -427,26 +464,70 @@ const processUploadImage = async ({ trapId, captureTime, temperature, metadata, 
 };
 
 app.post("/upload", upload.single("image"), async (req, res) => {
+  let uploadKey = null;
   try {
     const serverReceiptTime = new Date().toISOString();
-    const { trapId, captureTime, temperature, metadata } = req.body;
+    const { trapId, captureTime, temperature, metadata, clientId } = req.body;
     const file = req.file;
 
-    if (!trapId || !captureTime || !file) {
+    if (!trapId || !clientId || !captureTime || !file) {
       return res.status(400).json({
-        error: "Missing required fields: trapId, captureTime, image",
+        error: "Missing required fields: trapId, clientId, captureTime, image",
       });
+    }
+
+    if (!metadata) {
+      return res.status(400).json({ error: "metadata is required and must include triggerTime" });
+    }
+
+    let parsedMetadata = null;
+    try {
+      parsedMetadata = JSON.parse(metadata);
+    } catch {
+      return res.status(400).json({ error: "metadata must be valid JSON" });
+    }
+
+    if (!parsedMetadata?.triggerTime) {
+      return res.status(400).json({ error: "metadata.triggerTime is required for batch grouping" });
+    }
+
+    let validatedClientInfo = null;
+    try {
+      validatedClientInfo = await lookupTrapClientInfo(trapId);
+    } catch (lookupErr) {
+      const status = lookupErr?.response?.status || 500;
+      return res.status(status).json({
+        error: lookupErr?.response?.data?.error || "Failed to validate trap",
+      });
+    }
+
+    if (!validatedClientInfo?.clientId) {
+      return res.status(404).json({ error: "Trap not found" });
+    }
+
+    if (String(validatedClientInfo.clientId) !== String(clientId)) {
+      return res.status(403).json({ error: "clientId does not match trap assignment" });
     }
 
     const job = {
       trapId,
+      clientId,
       captureTime,
       temperature,
       metadata,
       fileBuffer: Buffer.from(file.buffer),
       fileName: file.originalname || "capture.jpg",
       serverReceiptTime,
+      validatedClientInfo,
     };
+    uploadKey = `${trapId}:${clientId}:${captureTime}:${Date.now()}`;
+    inFlightUploads.set(uploadKey, {
+      trapId,
+      clientId,
+      captureTime,
+      startedAt: serverReceiptTime,
+      stage: 'accepted',
+    });
 
     if (UPLOAD_ACK_IMMEDIATE) {
       res.status(202).json({
@@ -458,17 +539,24 @@ app.post("/upload", upload.single("image"), async (req, res) => {
 
       setImmediate(async () => {
         try {
+          const existing = inFlightUploads.get(uploadKey);
+          if (existing) inFlightUploads.set(uploadKey, { ...existing, stage: 'processing' });
           const result = await processUploadImage(job);
           console.log(`[upload-bg] completed for trap ${trapId}`, { detections: result.detections, imageUrl: result.imageUrl });
         } catch (error) {
           console.error(`[upload-bg] failed permanently for trap ${trapId}:`, error.response?.data || error.message || error);
+        } finally {
+          inFlightUploads.delete(uploadKey);
         }
       });
 
       return;
     }
 
+    const existing = inFlightUploads.get(uploadKey);
+    if (existing) inFlightUploads.set(uploadKey, { ...existing, stage: 'processing' });
     const result = await processUploadImage(job);
+    inFlightUploads.delete(uploadKey);
     return res.json({
       status: "success",
       message: "Image processed and queued",
@@ -478,6 +566,9 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       timingFeedback: result.timingFeedback,
     });
   } catch (error) {
+    if (uploadKey) {
+      inFlightUploads.delete(uploadKey);
+    }
     console.error("Upload processing failed:", error);
     return res.status(500).json({
       error: "Processing failed",
