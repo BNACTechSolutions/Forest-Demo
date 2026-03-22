@@ -27,6 +27,59 @@ const upload = multer(); // memory buffer only
 app.use(cors());
 
 // ====================
+// API / Protocol versioning
+// ====================
+const SUPPORTED_PROTOCOL_VERSIONS = (process.env.SUPPORTED_PROTOCOL_VERSIONS || "1.0")
+  .split(",")
+  .map((v) => v.trim().replace(/^v/i, ""))
+  .filter(Boolean);
+const DEFAULT_PROTOCOL_VERSION = String(
+  process.env.DEFAULT_PROTOCOL_VERSION || SUPPORTED_PROTOCOL_VERSIONS[0] || "1.0"
+)
+  .trim()
+  .replace(/^v/i, "");
+const STRICT_PROTOCOL_VERSION =
+  String(process.env.STRICT_PROTOCOL_VERSION || "false").toLowerCase() === "true";
+const API_CURRENT_VERSION = "v1";
+
+const normalizeProtocolVersion = (value) => {
+  if (value == null) return null;
+  const normalized = String(value).trim().replace(/^v/i, "");
+  return normalized || null;
+};
+
+const resolveProtocolVersion = ({ req, metadataObj }) => {
+  const requestedVersion =
+    normalizeProtocolVersion(req.get("x-ct-protocol-version")) ||
+    normalizeProtocolVersion(req.body?.protocolVersion) ||
+    normalizeProtocolVersion(metadataObj?.protocolVersion) ||
+    normalizeProtocolVersion(metadataObj?.protocol_version);
+
+  if (!requestedVersion) {
+    return {
+      requestedVersion: null,
+      effectiveVersion: DEFAULT_PROTOCOL_VERSION,
+      isSupported: true,
+      fallbackReason: "missing",
+    };
+  }
+
+  const isSupported = SUPPORTED_PROTOCOL_VERSIONS.includes(requestedVersion);
+  return {
+    requestedVersion,
+    effectiveVersion: isSupported ? requestedVersion : DEFAULT_PROTOCOL_VERSION,
+    isSupported,
+    fallbackReason: isSupported ? null : "unsupported",
+  };
+};
+
+const attachVersionHeaders = (res, versionInfo) => {
+  res.set("x-api-version", API_CURRENT_VERSION);
+  res.set("x-ct-protocol-version", versionInfo.effectiveVersion);
+  res.set("x-ct-supported-protocol-versions", SUPPORTED_PROTOCOL_VERSIONS.join(","));
+};
+
+// ====================
 // Aggregation config
 // ====================
 const AGGREGATION_WINDOW_MS = 60 * 1000; // 1 minute
@@ -40,12 +93,45 @@ const inFlightUploads = new Map(); // uploadKey -> { trapId, clientId, captureTi
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const lookupTrapClientInfo = async (trapId) => {
+// ====================
+// Correlation ID & Logger
+// ====================
+const generateCorrelationId = () => {
+  const ts = Date.now().toString(36).toUpperCase();
+  const rand = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `CT-${ts}-${rand}`;
+};
+
+// LOG_LEVEL env var controls verbosity:
+//   'debug' — all logs including detailed per-step lines (default in development)
+//   'info'  — flow-level logs only: received, found, complete, failed (default in production)
+// Set LOG_LEVEL explicitly to override. Falls back to NODE_ENV if LOG_LEVEL is not set.
+const _logLevel = process.env.LOG_LEVEL
+  ? process.env.LOG_LEVEL.toLowerCase()
+  : (process.env.NODE_ENV === 'production' ? 'info' : 'debug');
+const _isDev = _logLevel === 'debug';
+
+const createLogger = (correlationId, _deprecated = {}) => {
+  const prefix = `[${correlationId}]`;
+  const ts = () => new Date().toISOString();
+  return {
+    // debug — verbose detail lines, only printed in development / LOG_LEVEL=debug
+    debug: (msg) => { if (_isDev) console.log(`${ts()} ${prefix} DEBUG ${msg}`); },
+    // info — key flow checkpoints, always printed
+    info:  (msg) => console.log(`${ts()} ${prefix} INFO  ${msg}`),
+    warn:  (msg) => console.warn(`${ts()} ${prefix} WARN  ${msg}`),
+    error: (msg) => console.error(`${ts()} ${prefix} ERROR ${msg}`),
+  };
+};
+
+const lookupTrapClientInfo = async (trapId, { correlationId, log } = {}) => {
+  log?.debug(`Looking for trap with id: ${trapId}`);
   const { data: clientInfo } = await axios.post(
     process.env.BFF_CLIENT_LOOKUP_URL,
     { trapId },
-    { timeout: 8000 }
+    { timeout: 8000, headers: correlationId ? { 'x-correlation-id': correlationId } : {} }
   );
+  log?.info(`Trap found — id: ${trapId}, client: ${clientInfo?.clientId || 'unknown'}`);
   return clientInfo;
 };
 
@@ -54,7 +140,10 @@ const finalizeAggregation = async (aggKey) => {
   if (!agg) return;
   const trapId = agg.trapId;
   clearTimeout(agg.timer);
-  console.log(`finalizeAggregation: starting for key=${aggKey} trap=${trapId} (images=${agg.images.length})`);
+  const correlationId = agg.images[0]?.correlationId || generateCorrelationId();
+  const log = createLogger(correlationId, { trapId });
+  log.info(`Finalising event — ${agg.images.length} image(s) collected for trap ${trapId}`);
+  log.debug(`Aggregation key: ${aggKey}`);
   try {
     const images = agg.images;
     if (!images.length) return;
@@ -132,6 +221,7 @@ const finalizeAggregation = async (aggKey) => {
 
     const finalPayload = {
       trapId,
+      correlationId,
       eventStartTime: eventStart,  // Server receipt time (clean, no device 1970)
       eventEndTime: eventEnd,
       triggerTime,
@@ -177,29 +267,25 @@ const finalizeAggregation = async (aggKey) => {
     };
 
     if (!process.env.BFF_STORE_URL) {
-      console.warn('BFF_STORE_URL not set; skipping remote store. Payload:', finalPayload);
+      log.warn('BFF_STORE_URL is not configured — event will not be stored to backend');
     } else {
       try {
-        await axios.post(process.env.BFF_STORE_URL, finalPayload, { timeout: 15000 });
-        console.log(`Aggregated event stored for trap ${trapId} (images=${images.length})`);
-      } catch (postErr) {
-        console.error('BFF store rejected payload for', trapId, 'status=', postErr.response?.status, 'body=', postErr.response?.data);
-        console.error('FinalPayload keys:', Object.keys(finalPayload));
-        console.error('FinalPayload (summary):', {
-          trapId: finalPayload.trapId,
-          eventStartTime: finalPayload.eventStartTime,
-          eventEndTime: finalPayload.eventEndTime,
-          totalImagesReceived: finalPayload.totalImagesReceived,
-          totalDetections: finalPayload.totalDetections,
-          bestSpecies: finalPayload.bestSpecies,
+        log.debug(`Sending event to backend — ${images.length} image(s), top species: ${finalPayload.bestSpecies}`);
+        await axios.post(process.env.BFF_STORE_URL, finalPayload, {
+          timeout: 15000,
+          headers: { 'x-correlation-id': correlationId },
         });
+        log.info(`Event stored to backend — trap: ${trapId}, images: ${images.length}, top species: ${finalPayload.bestSpecies}`);
+      } catch (postErr) {
+        log.error(`Backend rejected event — HTTP ${postErr.response?.status || 'unknown'}: ${postErr.message}`);
+        log.debug(`Rejected payload: trapId=${finalPayload.trapId}, images=${finalPayload.totalImagesReceived}, detections=${finalPayload.totalDetections}, top species=${finalPayload.bestSpecies}`);
       }
     }
   } catch (err) {
-    console.error('Failed to finalize aggregation for', aggKey, err?.response?.data || err.message || err);
+    log.error(`Event finalisation failed: ${err?.message || err}`);
   } finally {
     aggregations.delete(aggKey);
-    console.log(`finalizeAggregation: finished for key=${aggKey} trap=${trapId}`);
+    log.info(`Aggregation pipeline complete for trap ${trapId}`);
   }
 };
 
@@ -230,7 +316,9 @@ const addImageToAggregation = (aggKey, trapId, clientInfo, perImage) => {
 
   agg.images.push({ clientInfo, ...perImage });
   const secondsRemaining = Math.max(Math.round((agg.finalizeAt - Date.now()) / 1000), 0);
-  console.log(`addImageToAggregation: key=${aggKey} images=${agg.images.length} flushIn=${secondsRemaining}s`);
+  const aggLog = createLogger(perImage.correlationId || aggKey, { trapId });
+  aggLog.info(`Image ${agg.images.length} added to event group — will flush in ${secondsRemaining}s`);
+  aggLog.debug(`Aggregation key: ${aggKey}`);
   if (agg.images.length >= MAX_IMAGES_PER_EVENT) {
     clearTimeout(agg.timer);
     // finalize asynchronously
@@ -298,8 +386,10 @@ const uploadToCloudinary = (buffer, originalName, trapId) => {
 // ====================
 // Main Route
 // ====================
-const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, temperature, metadata, fileBuffer, fileName, serverReceiptTime, validatedClientInfo }) => {
-  console.log('Timings for hardware: ', metadata);
+const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, temperature, metadata, fileBuffer, fileName, serverReceiptTime, validatedClientInfo, protocolVersion, correlationId }) => {
+  const log = createLogger(correlationId, { trapId });
+  log.info(`New image upload from trap ${trapId} — capture time: ${captureTime}`);
+  log.debug(`Client ID from device: ${ctClientId}`);
 
   // 1. Parse temperature
   const tempValue = temperature ? parseFloat(temperature) : null;
@@ -317,14 +407,15 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
         pppStartTime: parsed.pppStartTime || null,
         pppConnectedTime: parsed.pppConnectedTime || null,
       };
+      log.debug(`Metadata parsed — trigger time: ${timing.triggerTime}, capture time: ${timing.captureTimeDevice}`);
     } catch (e) {
-      console.warn("Failed to parse metadata JSON:", e.message);
+      log.warn(`Metadata could not be parsed: ${e.message}`);
       metadataParseError = e.message;
     }
   }
 
   // Step 1: Client lookup
-  const clientInfo = validatedClientInfo || await lookupTrapClientInfo(trapId);
+  const clientInfo = validatedClientInfo || await lookupTrapClientInfo(trapId, { correlationId, log });
 
   if (!clientInfo?.clientId) {
     throw new Error("Client not found for trapId");
@@ -334,7 +425,10 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
     throw new Error("Provided clientId does not match trap assignment");
   }
 
+  log.info(`Client verified — id: ${clientInfo.clientId}`);
+
   // Step 2: Cloudinary upload
+  log.debug('Uploading image to Cloudinary...');
   const clResult = await uploadToCloudinary(fileBuffer, fileName, trapId);
   const cloudinaryUploadTime = new Date().toISOString();
   const imageUrl = clResult.secure_url;
@@ -343,6 +437,7 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
     secure: true,
     transformation: { width: 800, height: 600, crop: "limit", fetch_format: "auto" },
   });
+  log.info(`Cloudinary upload complete — public id: ${publicId}`);
 
   // Step 3: AI inference with retry loop (retries AI only, not Cloudinary upload)
   let aiResponse = null;
@@ -360,9 +455,10 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
     form.append("detector_threshold", "0.30");
     form.append("topk_species", "3");
 
+    log.debug(`Sending image to AI server (attempt ${attempt} of ${maxAiAttempts})`);
     try {
       aiResponse = await axios.post(process.env.AI_SERVER_URL, form, {
-        headers: form.getHeaders(),
+        headers: { ...form.getHeaders(), 'x-correlation-id': correlationId },
         timeout: 90000,
       });
       aiResponseReceivedAt = new Date().toISOString();
@@ -373,11 +469,12 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
         status: 'ok',
         attempts: attempt,
       };
+      log.debug(`AI server responded in ${aiTimings.durationMs}ms (attempt ${attempt})`);
       break;
     } catch (err) {
       aiError = err;
       const lastAttempt = attempt === maxAiAttempts;
-      console.error(`[ai] attempt ${attempt}/${maxAiAttempts} failed for trap ${trapId}:`, err?.response?.data || err?.message || err);
+      log.warn(`AI attempt ${attempt}/${maxAiAttempts} failed: ${err?.message || 'unknown error'}`);
       if (!lastAttempt) {
         await sleep(UPLOAD_RETRY_DELAY_MS * attempt);
       }
@@ -399,6 +496,11 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
 
   const { detections = [], warnings = [] } = aiResponse.data;
   const processingTime = new Date().toISOString();
+  if (aiTimings?.status === 'error') {
+    log.warn(`AI analysis failed after all ${maxAiAttempts} attempt(s) — event will be stored without AI detections`);
+  } else {
+    log.info(`AI analysis complete — ${detections.length} detection(s) identified`);
+  }
 
   const calculateDelayMs = (start, end) => {
     if (!start || !end) return null;
@@ -425,7 +527,10 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
   // Queue image into per-trap+client+trigger aggregation for final event write.
   const effectiveClientId = ctClientId;
   const aggKey = `${trapId}:${effectiveClientId}:${timing.triggerTime}`;
+  log.debug(`Queuing image for event grouping — key: ${aggKey}`);
   addImageToAggregation(aggKey, trapId, clientInfo, {
+    correlationId,
+    protocolVersion: protocolVersion || DEFAULT_PROTOCOL_VERSION,
     captureTime,
     processingTime,
     serverReceiptTime,
@@ -452,23 +557,29 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
     },
   });
 
+  const totalDelay = delays.totalDeviceToProcessing ?? Math.round((aiTimings?.durationMs || 0) / 1000);
+  log.info(`Image processing complete — ${detections.length} detection(s), total delay: ${totalDelay}s`);
   return {
     imageUrl,
+    correlationId,
     detections: detections.length,
-    processingDelaySeconds: delays.totalDeviceToProcessing ?? Math.round((aiTimings?.durationMs || 0) / 1000),
+    processingDelaySeconds: totalDelay,
     timingFeedback: {
-      totalDelay: delays.totalDeviceToProcessing ?? Math.round((aiTimings?.durationMs || 0) / 1000),
+      totalDelay,
       pppConnectionTime: delays.pppStartToConnected,
     },
   };
 };
 
-app.post("/upload", upload.single("image"), async (req, res) => {
+const uploadHandler = async (req, res) => {
   let uploadKey = null;
+  const correlationId = generateCorrelationId();
+  const log = createLogger(correlationId);
   try {
     const serverReceiptTime = new Date().toISOString();
     const { trapId, captureTime, temperature, metadata, clientId } = req.body;
     const file = req.file;
+    log.info(`Upload request received — trap: ${trapId}, client: ${clientId}`);
 
     if (!trapId || !clientId || !captureTime || !file) {
       return res.status(400).json({
@@ -491,9 +602,20 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       return res.status(400).json({ error: "metadata.triggerTime is required for batch grouping" });
     }
 
+    const versionInfo = resolveProtocolVersion({ req, metadataObj: parsedMetadata });
+    attachVersionHeaders(res, versionInfo);
+
+    if (!versionInfo.isSupported && STRICT_PROTOCOL_VERSION) {
+      return res.status(426).json({
+        error: `Unsupported protocolVersion '${versionInfo.requestedVersion}'`,
+        supportedProtocolVersions: SUPPORTED_PROTOCOL_VERSIONS,
+        defaultProtocolVersion: DEFAULT_PROTOCOL_VERSION,
+      });
+    }
+
     let validatedClientInfo = null;
     try {
-      validatedClientInfo = await lookupTrapClientInfo(trapId);
+      validatedClientInfo = await lookupTrapClientInfo(trapId, { correlationId, log });
     } catch (lookupErr) {
       const status = lookupErr?.response?.status || 500;
       return res.status(status).json({
@@ -515,6 +637,8 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       captureTime,
       temperature,
       metadata,
+      protocolVersion: versionInfo.effectiveVersion,
+      correlationId,
       fileBuffer: Buffer.from(file.buffer),
       fileName: file.originalname || "capture.jpg",
       serverReceiptTime,
@@ -525,14 +649,20 @@ app.post("/upload", upload.single("image"), async (req, res) => {
       trapId,
       clientId,
       captureTime,
+      correlationId,
       startedAt: serverReceiptTime,
       stage: 'accepted',
     });
 
     if (UPLOAD_ACK_IMMEDIATE) {
+      res.set('x-correlation-id', correlationId);
       res.status(202).json({
         status: "accepted",
         message: "Image accepted for background processing",
+        apiVersion: API_CURRENT_VERSION,
+        protocolVersion: versionInfo.effectiveVersion,
+        protocolWarning: versionInfo.fallbackReason,
+        correlationId,
         trapId,
         captureTime,
       });
@@ -542,9 +672,9 @@ app.post("/upload", upload.single("image"), async (req, res) => {
           const existing = inFlightUploads.get(uploadKey);
           if (existing) inFlightUploads.set(uploadKey, { ...existing, stage: 'processing' });
           const result = await processUploadImage(job);
-          console.log(`[upload-bg] completed for trap ${trapId}`, { detections: result.detections, imageUrl: result.imageUrl });
+          log.info(`Background processing finished — ${result.detections} detection(s)`);
         } catch (error) {
-          console.error(`[upload-bg] failed permanently for trap ${trapId}:`, error.response?.data || error.message || error);
+          log.error(`Background processing failed: ${error.message || error}`);
         } finally {
           inFlightUploads.delete(uploadKey);
         }
@@ -557,9 +687,14 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     if (existing) inFlightUploads.set(uploadKey, { ...existing, stage: 'processing' });
     const result = await processUploadImage(job);
     inFlightUploads.delete(uploadKey);
+    res.set('x-correlation-id', correlationId);
     return res.json({
       status: "success",
       message: "Image processed and queued",
+      apiVersion: API_CURRENT_VERSION,
+      protocolVersion: versionInfo.effectiveVersion,
+      protocolWarning: versionInfo.fallbackReason,
+      correlationId,
       imageUrl: result.imageUrl,
       detections: result.detections,
       processingDelaySeconds: result.processingDelaySeconds,
@@ -569,21 +704,38 @@ app.post("/upload", upload.single("image"), async (req, res) => {
     if (uploadKey) {
       inFlightUploads.delete(uploadKey);
     }
-    console.error("Upload processing failed:", error);
+    log.error(`Upload handler error: ${error.message || error}`);
     return res.status(500).json({
       error: "Processing failed",
+      correlationId,
       details: error.response?.data || error.message,
     });
   }
-});
+};
+
+app.post(["/upload", "/api/v1/upload"], upload.single("image"), uploadHandler);
 
 // ====================
 // Device Status & Time Sync
 // ====================
 
 // POST /daily_status - accept daily status from camera trap and forward to BFF
-app.post("/daily_status", express.json(), async (req, res) => {
+const dailyStatusHandler = async (req, res) => {
+  const correlationId = generateCorrelationId();
+  const log = createLogger(correlationId);
   try {
+    const versionInfo = resolveProtocolVersion({ req, metadataObj: null });
+    attachVersionHeaders(res, versionInfo);
+    res.set('x-correlation-id', correlationId);
+
+    if (!versionInfo.isSupported && STRICT_PROTOCOL_VERSION) {
+      return res.status(426).json({
+        error: `Unsupported protocolVersion '${versionInfo.requestedVersion}'`,
+        supportedProtocolVersions: SUPPORTED_PROTOCOL_VERSIONS,
+        defaultProtocolVersion: DEFAULT_PROTOCOL_VERSION,
+      });
+    }
+
     const {
       trapId,
       sd_free,
@@ -597,47 +749,85 @@ app.post("/daily_status", express.json(), async (req, res) => {
       return res.status(400).json({ error: "trapId required" });
     }
 
+    log.info(`Daily status received from trap ${trapId}`);
+
     // Forward to internal backend
     if (process.env.BFF_DAILY_STATUS_URL) {
       try {
         const response = await axios.post(
           process.env.BFF_DAILY_STATUS_URL,
           req.body,
-          { timeout: 10000 }
+          { timeout: 10000, headers: { 'x-correlation-id': correlationId } }
         );
-        console.log(`[daily_status] Forwarded to BFF for trap ${trapId}`);
-        return res.status(201).json(response.data);
+        log.info(`Daily status forwarded to backend successfully`);
+        return res.status(201).json({ ...response.data, correlationId });
       } catch (fwdErr) {
-        console.error(
-          `[daily_status] Failed to forward for trap ${trapId}:`,
-          fwdErr.response?.data || fwdErr.message
-        );
+        log.error(`Failed to forward daily status to backend: ${fwdErr.message}`);
         return res.status(500).json({
           error: "Failed to store daily status",
+          correlationId,
           details: fwdErr.response?.data || fwdErr.message,
         });
       }
     } else {
-      console.warn("[daily_status] BFF_DAILY_STATUS_URL not set; storing locally would go here");
+      log.warn('BFF_DAILY_STATUS_URL is not configured — daily status will not be stored');
       return res.status(201).json({
         message: "Daily status received (BFF forwarding disabled)",
+        apiVersion: API_CURRENT_VERSION,
+        protocolVersion: versionInfo.effectiveVersion,
+        protocolWarning: versionInfo.fallbackReason,
+        correlationId,
         trapId,
       });
     }
   } catch (error) {
-    console.error("[daily_status] Error:", error);
-    res.status(500).json({ error: "Internal server error" });
+    log.error(`Daily status handler error: ${error.message}`);
+    res.status(500).json({ error: "Internal server error", correlationId });
   }
-});
+};
+
+app.post(["/daily_status", "/api/v1/daily_status"], express.json(), dailyStatusHandler);
 
 // GET /time_sync - return current UTC timestamp for camera trap time synchronization
-app.get("/time_sync", (req, res) => {
-  res.json({ timestamp: new Date().toISOString() });
-});
+const timeSyncHandler = (req, res) => {
+  const versionInfo = resolveProtocolVersion({ req, metadataObj: null });
+  attachVersionHeaders(res, versionInfo);
+  res.json({
+    timestamp: new Date().toISOString(),
+    apiVersion: API_CURRENT_VERSION,
+    protocolVersion: versionInfo.effectiveVersion,
+    protocolWarning: versionInfo.fallbackReason,
+  });
+};
+
+app.get(["/time_sync", "/api/v1/time_sync"], timeSyncHandler);
 
 // Health check
-app.get("/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+const healthHandler = (req, res) => {
+  const versionInfo = resolveProtocolVersion({ req, metadataObj: null });
+  attachVersionHeaders(res, versionInfo);
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    apiVersion: API_CURRENT_VERSION,
+    protocolVersion: versionInfo.effectiveVersion,
+    supportedProtocolVersions: SUPPORTED_PROTOCOL_VERSIONS,
+  });
+};
+
+app.get(["/health", "/api/v1/health"], healthHandler);
+
+app.get(["/version", "/api/version"], (req, res) => {
+  res.json({
+    apiVersion: API_CURRENT_VERSION,
+    supportedProtocolVersions: SUPPORTED_PROTOCOL_VERSIONS,
+    defaultProtocolVersion: DEFAULT_PROTOCOL_VERSION,
+    strictProtocolVersion: STRICT_PROTOCOL_VERSION,
+    endpoints: {
+      versionedBase: `/api/${API_CURRENT_VERSION}`,
+      legacyCompat: true,
+    },
+  });
 });
 
 const PORT = process.env.PORT || 3003;
@@ -645,10 +835,19 @@ app.listen(PORT, () => {
   console.log(`Camera Trap Backend (ESM) running on http://localhost:${PORT}`);
   console.log(`Ready to receive images`);
   console.log(`Upload ACK mode: ${UPLOAD_ACK_IMMEDIATE ? "async (202 + background)" : "sync (wait for AI)"}`);
+  console.log(`API version: ${API_CURRENT_VERSION}`);
+  console.log(`Supported protocol versions: ${SUPPORTED_PROTOCOL_VERSIONS.join(", ")}`);
+  console.log(`Default protocol version: ${DEFAULT_PROTOCOL_VERSION}`);
+  console.log(`Strict protocol version mode: ${STRICT_PROTOCOL_VERSION}`);
   console.log(`\nAvailable endpoints:`);
   console.log(`- POST /upload (image processing with aggregation)`);
+  console.log(`- POST /api/v1/upload (versioned alias)`);
   console.log(`- POST /daily_status (device status forwarding)`);
+  console.log(`- POST /api/v1/daily_status (versioned alias)`);
   console.log(`- GET /time_sync (UTC timestamp for CT time sync)`);
+  console.log(`- GET /api/v1/time_sync (versioned alias)`);
   console.log(`- GET /health (health check)`);
+  console.log(`- GET /api/v1/health (versioned alias)`);
+  console.log(`- GET /version or /api/version (capabilities)`);
   console.log(`- GET /debug/aggregations (inspect active aggregations)`);
 });
