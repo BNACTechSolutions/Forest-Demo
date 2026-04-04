@@ -4,9 +4,17 @@ import multer from "multer";
 import axios from "axios";
 import { v2 as cloudinary } from "cloudinary";
 import { PassThrough } from "stream";
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 import dotenv from "dotenv";
 import FormData from "form-data";
 import cors from "cors";
+import swaggerUi from "swagger-ui-express";
+import { load as yamlLoad } from "js-yaml";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 dotenv.config();
 
@@ -665,6 +673,7 @@ const uploadHandler = async (req, res) => {
         correlationId,
         trapId,
         captureTime,
+        serverTime: new Date().toISOString(),
       });
 
       setImmediate(async () => {
@@ -699,6 +708,7 @@ const uploadHandler = async (req, res) => {
       detections: result.detections,
       processingDelaySeconds: result.processingDelaySeconds,
       timingFeedback: result.timingFeedback,
+      serverTime: new Date().toISOString(),
     });
   } catch (error) {
     if (uploadKey) {
@@ -817,6 +827,21 @@ const healthHandler = (req, res) => {
 
 app.get(["/health", "/api/v1/health"], healthHandler);
 
+// ====================
+// API Documentation (Swagger UI)
+// ====================
+const swaggerSpec = yamlLoad(readFileSync(join(__dirname, "api-docs.yaml"), "utf8"));
+app.use("/api-docs", swaggerUi.serve);
+app.get("/api-docs", swaggerUi.setup(swaggerSpec, {
+  customSiteTitle: "CameraTrap API Docs",
+  swaggerOptions: { url: "/api-docs.json" },
+}));
+app.get("/api-docs.json", (req, res) => res.json(swaggerSpec));
+app.get("/api-docs.yaml", (req, res) => {
+  res.set("Content-Type", "application/yaml");
+  res.send(readFileSync(join(__dirname, "api-docs.yaml"), "utf8"));
+});
+
 app.get(["/version", "/api/version"], (req, res) => {
   res.json({
     apiVersion: API_CURRENT_VERSION,
@@ -850,4 +875,7 @@ app.listen(PORT, () => {
   console.log(`- GET /api/v1/health (versioned alias)`);
   console.log(`- GET /version or /api/version (capabilities)`);
   console.log(`- GET /debug/aggregations (inspect active aggregations)`);
+  console.log(`- GET /api-docs (Swagger UI — interactive API documentation)`);
+  console.log(`- GET /api-docs.json (OpenAPI spec as JSON)`);
+  console.log(`- GET /api-docs.yaml (OpenAPI spec as YAML)`);
 });

@@ -1,0 +1,840 @@
+openapi: 3.1.0
+info:
+  title: CameraTrap Edge Ingestion API
+  version: v1
+  description: |
+    Public API exposed by the Camera Trap model-serving backend.
+    Camera-trap devices use this API to upload images, report daily status, and
+    synchronise their clocks.  All device-facing endpoints are available both on
+    their legacy bare path (e.g. `/upload`) and on the versioned path
+    (`/api/v1/upload`).  The versioned path is the canonical form and should be
+    preferred for new integrations.
+
+    ### Protocol Versioning
+    Devices communicate their protocol version via the `x-ct-protocol-version`
+    request header **or** via `protocolVersion` / `protocol_version` inside the
+    JSON `metadata` field.  The server negotiates the effective version and
+    always echoes it in the `x-ct-protocol-version` response header.
+
+    | Response Header | Meaning |
+    |---|---|
+    | `x-api-version` | HTTP API version (always `v1`) |
+    | `x-ct-protocol-version` | Negotiated device protocol version |
+    | `x-ct-supported-protocol-versions` | Comma-separated list of all supported protocol versions |
+    | `x-correlation-id` | Unique request trace ID |
+
+servers:
+  - url: http://localhost:3003
+    description: Local development
+  - url: https://<your-production-host>
+    description: Production
+
+tags:
+  - name: Image Ingestion
+    description: Camera-trap image upload and AI processing pipeline
+  - name: Device Telemetry
+    description: Device health and operational status reporting
+  - name: Utility
+    description: Time synchronisation, health check, and version discovery
+  - name: Debug
+    description: Internal observability endpoints — not intended for devices
+
+paths:
+  # -------------------------------------------------------------------------
+  # Image Upload
+  # -------------------------------------------------------------------------
+  /api/v1/upload:
+    post:
+      tags: [Image Ingestion]
+      summary: Upload a camera-trap image for AI processing
+      operationId: uploadImage
+      description: |
+        Accepts a single JPEG/PNG image from a camera-trap device together with
+        capture metadata.  The server performs the following pipeline steps and
+        then returns:
+
+        1. **Validation** – required fields and `metadata.triggerTime` are checked.
+        2. **Client lookup** – the `trapId` is resolved to a client record via the
+           internal BFF lookup service; the supplied `clientId` is verified against
+           the record.
+        3. **Cloudinary upload** – the raw image is stored in Cloudinary under
+           `camera-traps/{trapId}/`.  A thumbnail (800 × 600) is derived eagerly.
+        4. **AI inference** – the image is forwarded to the AI server
+           (MegaDetector + CLIP species classifier).  Up to
+           `AI_PROCESS_RETRIES + 1` attempts are made with exponential-style back-off.
+           On total AI failure the image is still stored but a
+           `HUMAN_INTERVENTION_REQUIRED` warning is attached and manual review
+           is flagged.
+        5. **Aggregation** – the processed image is added to a per-`trapId` +
+           `triggerTime` cohort.  The cohort is flushed to the backend store
+           either after a 60-second window or when 5 images have been collected,
+           whichever comes first.  Images sharing the same `triggerTime` are
+           grouped into a **single detection event** — they do not create
+           separate database records.
+        6. **Response** – returns `200 OK` with a summary.  If the server is
+           configured for async acknowledgement (`UPLOAD_ACK_IMMEDIATE=true`) it
+           returns `202 Accepted` immediately and completes steps 3–5 in the
+           background.
+
+        ### Duplicate / Late Images
+        If an image arrives with the same `triggerTime` as an already-open cohort,
+        it is appended to the cohort and the 60-second flush timer is **reset**.
+        There is no separate database record; the new image is merged into the
+        existing event set.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - trapId
+                - clientId
+                - captureTime
+                - image
+                - metadata
+              properties:
+                trapId:
+                  type: string
+                  description: Unique identifier of the camera trap device.
+                  example: "TRAP-007"
+                clientId:
+                  type: string
+                  description: |
+                    Client identifier as provisioned on the device. Must match
+                    the `clientId` stored for this `trapId` in the backend; the
+                    server rejects mismatches with `403`.
+                  example: "CLIENT-42"
+                captureTime:
+                  type: string
+                  format: date-time
+                  description: ISO-8601 UTC timestamp at which the image was captured (from device clock).
+                  example: "2026-04-04T08:23:01Z"
+                temperature:
+                  type: number
+                  description: Ambient temperature at time of capture (°C). Optional.
+                  example: 22.5
+                metadata:
+                  type: string
+                  description: |
+                    JSON string containing detailed device timing fields.
+                    `triggerTime` is mandatory — it is the primary key used to
+                    group images from the same detection event into one cohort.
+                  example: |
+                    {
+                      "triggerTime": "2026-04-04T08:23:00Z",
+                      "captureTime": "2026-04-04T08:23:01Z",
+                      "pppStartTime": "2026-04-04T08:23:02Z",
+                      "pppConnectedTime": "2026-04-04T08:23:04Z",
+                      "protocolVersion": "1.0"
+                    }
+                image:
+                  type: string
+                  format: binary
+                  description: Raw image file (JPEG or PNG recommended).
+            encoding:
+              image:
+                contentType: image/jpeg, image/png
+      parameters:
+        - $ref: '#/components/parameters/ProtocolVersionHeader'
+      responses:
+        '200':
+          description: Image processed successfully and queued for event aggregation.
+          headers:
+            x-api-version:
+              $ref: '#/components/headers/ApiVersion'
+            x-ct-protocol-version:
+              $ref: '#/components/headers/CtProtocolVersion'
+            x-ct-supported-protocol-versions:
+              $ref: '#/components/headers/CtSupportedProtocolVersions'
+            x-correlation-id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadSuccessResponse'
+        '202':
+          description: |
+            Image accepted for background processing (`UPLOAD_ACK_IMMEDIATE=true`).
+            The device should not assume processing is complete; the event will
+            be stored asynchronously.
+          headers:
+            x-api-version:
+              $ref: '#/components/headers/ApiVersion'
+            x-ct-protocol-version:
+              $ref: '#/components/headers/CtProtocolVersion'
+            x-ct-supported-protocol-versions:
+              $ref: '#/components/headers/CtSupportedProtocolVersions'
+            x-correlation-id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadAcceptedResponse'
+        '400':
+          description: |
+            Missing or invalid request fields.  Possible `error` values:
+            - `"Missing required fields: trapId, clientId, captureTime, image"`
+            - `"metadata is required and must include triggerTime"`
+            - `"metadata must be valid JSON"`
+            - `"metadata.triggerTime is required for batch grouping"`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '403':
+          description: The supplied `clientId` does not match the registered owner of `trapId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "clientId does not match trap assignment"
+        '404':
+          description: No camera trap record found for the given `trapId`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Trap not found"
+        '426':
+          description: |
+            Unsupported protocol version and the server is running in strict mode
+            (`STRICT_PROTOCOL_VERSION=true`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionUpgradeResponse'
+        '500':
+          description: Internal processing error (Cloudinary, AI server, or BFF unreachable).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponseWithDetails'
+
+  /upload:
+    post:
+      tags: [Image Ingestion]
+      summary: Upload a camera-trap image (legacy path)
+      operationId: uploadImageLegacy
+      description: |
+        Legacy alias for `POST /api/v1/upload`.  Accepts identical parameters
+        and returns identical responses.  Prefer the versioned path for new
+        integrations.
+      requestBody:
+        $ref: '#/paths/~1api~1v1~1upload/post/requestBody'
+      parameters:
+        - $ref: '#/components/parameters/ProtocolVersionHeader'
+      responses:
+        $ref: '#/paths/~1api~1v1~1upload/post/responses'
+
+  # -------------------------------------------------------------------------
+  # Daily Device Status
+  # -------------------------------------------------------------------------
+  /api/v1/daily_status:
+    post:
+      tags: [Device Telemetry]
+      summary: Report daily operational status from a camera trap
+      operationId: reportDailyStatus
+      description: |
+        Called once per day by each camera trap to report battery level, SD card
+        usage, trigger count, and upload failure count.  The server forwards this
+        payload verbatim to the internal backend storage service
+        (`BFF_DAILY_STATUS_URL`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DailyStatusRequest'
+      parameters:
+        - $ref: '#/components/parameters/ProtocolVersionHeader'
+      responses:
+        '201':
+          description: Status received and forwarded to backend successfully.
+          headers:
+            x-api-version:
+              $ref: '#/components/headers/ApiVersion'
+            x-ct-protocol-version:
+              $ref: '#/components/headers/CtProtocolVersion'
+            x-ct-supported-protocol-versions:
+              $ref: '#/components/headers/CtSupportedProtocolVersions'
+            x-correlation-id:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Backend response forwarded verbatim, plus `correlationId`.
+                properties:
+                  correlationId:
+                    type: string
+                    example: "CT-M8X3K2-A1B2"
+        '400':
+          description: "`trapId` field is missing from the request body."
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "trapId required"
+        '426':
+          description: Unsupported protocol version (strict mode only).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionUpgradeResponse'
+        '500':
+          description: Failed to forward status to the backend storage service.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponseWithDetails'
+
+  /daily_status:
+    post:
+      tags: [Device Telemetry]
+      summary: Report daily device status (legacy path)
+      operationId: reportDailyStatusLegacy
+      description: Legacy alias for `POST /api/v1/daily_status`.
+      requestBody:
+        $ref: '#/paths/~1api~1v1~1daily_status/post/requestBody'
+      parameters:
+        - $ref: '#/components/parameters/ProtocolVersionHeader'
+      responses:
+        $ref: '#/paths/~1api~1v1~1daily_status/post/responses'
+
+  # -------------------------------------------------------------------------
+  # Time Synchronisation
+  # -------------------------------------------------------------------------
+  /api/v1/time_sync:
+    get:
+      tags: [Utility]
+      summary: Get current UTC server time for device clock synchronisation
+      operationId: getTimeSync
+      description: |
+        Returns the current server UTC timestamp.  Devices call this on boot
+        (or periodically) to align their onboard real-time clock with server
+        time, ensuring `triggerTime` and `captureTime` values in image uploads
+        are meaningful.
+      parameters:
+        - $ref: '#/components/parameters/ProtocolVersionHeader'
+      responses:
+        '200':
+          description: Current server UTC timestamp.
+          headers:
+            x-api-version:
+              $ref: '#/components/headers/ApiVersion'
+            x-ct-protocol-version:
+              $ref: '#/components/headers/CtProtocolVersion'
+            x-ct-supported-protocol-versions:
+              $ref: '#/components/headers/CtSupportedProtocolVersions'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TimeSyncResponse'
+
+  /time_sync:
+    get:
+      tags: [Utility]
+      summary: Get current UTC server time (legacy path)
+      operationId: getTimeSyncLegacy
+      description: Legacy alias for `GET /api/v1/time_sync`.
+      parameters:
+        - $ref: '#/components/parameters/ProtocolVersionHeader'
+      responses:
+        $ref: '#/paths/~1api~1v1~1time_sync/get/responses'
+
+  # -------------------------------------------------------------------------
+  # Health Check
+  # -------------------------------------------------------------------------
+  /api/v1/health:
+    get:
+      tags: [Utility]
+      summary: Health check
+      operationId: healthCheck
+      description: |
+        Returns a simple liveness probe.  HTTP `200` means the server process
+        is running and accepting connections.  Does **not** verify downstream
+        services (Cloudinary, AI server, BFF).
+      parameters:
+        - $ref: '#/components/parameters/ProtocolVersionHeader'
+      responses:
+        '200':
+          description: Server is healthy.
+          headers:
+            x-api-version:
+              $ref: '#/components/headers/ApiVersion'
+            x-ct-protocol-version:
+              $ref: '#/components/headers/CtProtocolVersion'
+            x-ct-supported-protocol-versions:
+              $ref: '#/components/headers/CtSupportedProtocolVersions'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /health:
+    get:
+      tags: [Utility]
+      summary: Health check (legacy path)
+      operationId: healthCheckLegacy
+      description: Legacy alias for `GET /api/v1/health`.
+      responses:
+        $ref: '#/paths/~1api~1v1~1health/get/responses'
+
+  # -------------------------------------------------------------------------
+  # Version Discovery
+  # -------------------------------------------------------------------------
+  /api/version:
+    get:
+      tags: [Utility]
+      summary: Discover supported API and protocol versions
+      operationId: getVersion
+      description: |
+        Returns the current API version, all supported device protocol versions,
+        and the default fallback version.  Devices can use this to determine
+        whether their firmware protocol version is still accepted before
+        attempting an upload.
+
+        > **Note**: This endpoint does not yet have a `/api/v1/version` alias.
+        > The canonical path is `/api/version` (alias `/version`).
+      responses:
+        '200':
+          description: Version information.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionResponse'
+
+  /version:
+    get:
+      tags: [Utility]
+      summary: Discover supported API and protocol versions (legacy path)
+      operationId: getVersionLegacy
+      description: Legacy alias for `GET /api/version`.
+      responses:
+        $ref: '#/paths/~1api~1version/get/responses'
+
+  /api-docs:
+    get:
+      tags: [Utility]
+      summary: Interactive API documentation (Swagger UI)
+      operationId: getApiDocs
+      description: |
+        Serves the Swagger UI interface for this API.  Open in a browser to
+        browse all endpoints, view request/response schemas, and try requests
+        against a running server.
+      responses:
+        '200':
+          description: HTML page containing the Swagger UI.
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /api-docs.json:
+    get:
+      tags: [Utility]
+      summary: OpenAPI specification (JSON)
+      operationId: getApiDocsJson
+      description: Returns the full OpenAPI 3.1 specification for this API as JSON.
+      responses:
+        '200':
+          description: OpenAPI spec in JSON format.
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /api-docs.yaml:
+    get:
+      tags: [Utility]
+      summary: OpenAPI specification (YAML)
+      operationId: getApiDocsYaml
+      description: Returns the full OpenAPI 3.1 specification for this API as YAML.
+      responses:
+        '200':
+          description: OpenAPI spec in YAML format.
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+  # -------------------------------------------------------------------------
+  # Debug Endpoints (internal)
+  # -------------------------------------------------------------------------
+  /debug/aggregations:
+    get:
+      tags: [Debug]
+      summary: Inspect active aggregation cohorts and in-flight uploads
+      operationId: debugAggregations
+      description: |
+        **Internal observability endpoint — not called by camera-trap devices.**
+
+        Returns a snapshot of:
+        - Every open aggregation cohort (trap/client/trigger groups waiting to be
+          flushed).
+        - Every in-flight upload (images currently being processed through
+          Cloudinary → AI → aggregation).
+
+        Useful for diagnosing stuck uploads or confirming an image was received.
+
+        > This endpoint carries **no versioning prefix** and no protocol-version
+        > negotiation.  It should not be exposed on the public internet.
+      responses:
+        '200':
+          description: Current aggregation state snapshot.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AggregationSnapshot'
+
+  /aggregations:
+    get:
+      tags: [Debug]
+      summary: Inspect active aggregation cohorts (convenience alias)
+      operationId: getAggregations
+      description: Alias for `GET /debug/aggregations`.
+      responses:
+        $ref: '#/paths/~1debug~1aggregations/get/responses'
+
+# =============================================================================
+# Components
+# =============================================================================
+components:
+  parameters:
+    ProtocolVersionHeader:
+      name: x-ct-protocol-version
+      in: header
+      required: false
+      schema:
+        type: string
+        example: "1.0"
+      description: |
+        Device protocol version.  If omitted or unrecognised the server falls
+        back to `DEFAULT_PROTOCOL_VERSION`.  When `STRICT_PROTOCOL_VERSION=true`
+        an unrecognised version is rejected with `426`.
+
+  headers:
+    ApiVersion:
+      description: HTTP API version in use on this server (always `v1`).
+      schema:
+        type: string
+        example: v1
+    CtProtocolVersion:
+      description: Negotiated device protocol version for this request.
+      schema:
+        type: string
+        example: "1.0"
+    CtSupportedProtocolVersions:
+      description: Comma-separated list of all protocol versions this server accepts.
+      schema:
+        type: string
+        example: "1.0"
+    CorrelationId:
+      description: Unique trace ID for this request, present on every response.
+      schema:
+        type: string
+        example: "CT-M8X3K2-A1B2"
+
+  schemas:
+    # --- Request Bodies ---
+    DailyStatusRequest:
+      type: object
+      required:
+        - trapId
+      properties:
+        trapId:
+          type: string
+          description: Unique identifier of the camera trap device.
+          example: "TRAP-007"
+        sd_free:
+          type: number
+          description: Free space on the SD card in MB.
+          example: 14336
+        sd_used:
+          type: number
+          description: Used space on the SD card in MB.
+          example: 2048
+        battery_voltage:
+          type: number
+          description: Battery voltage in volts.
+          example: 12.4
+        total_triggers_today:
+          type: integer
+          description: Number of motion triggers fired during the current reporting period.
+          example: 47
+        failed_uploads:
+          type: integer
+          description: Number of upload attempts that failed during the current reporting period.
+          example: 2
+
+    # --- Successful Upload Responses ---
+    UploadSuccessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [success]
+          example: success
+        message:
+          type: string
+          example: "Image processed and queued"
+        apiVersion:
+          type: string
+          example: v1
+        protocolVersion:
+          type: string
+          description: Negotiated protocol version for this request.
+          example: "1.0"
+        protocolWarning:
+          type: string
+          nullable: true
+          description: |
+            Non-null when the requested protocol version was not recognised and
+            the server fell back to the default.  Possible values:
+            `"missing"` (no version was sent), `"unsupported"` (version unknown).
+          example: null
+        correlationId:
+          type: string
+          example: "CT-M8X3K2-A1B2"
+        imageUrl:
+          type: string
+          format: uri
+          description: Cloudinary URL of the stored image.
+          example: "https://res.cloudinary.com/example/image/upload/camera-traps/TRAP-007/1743752581_capture.jpg"
+        detections:
+          type: integer
+          description: Number of AI detections returned for this image.
+          example: 2
+        processingDelaySeconds:
+          type: number
+          description: |
+            Total elapsed time from `triggerTime` to AI processing completion,
+            in seconds.  `null` when timing data could not be computed.
+          example: 14
+        timingFeedback:
+          type: object
+          properties:
+            totalDelay:
+              type: number
+              nullable: true
+              example: 14
+            pppConnectionTime:
+              type: number
+              nullable: true
+              description: Seconds between PPP start and PPP connected events.
+              example: 2
+        serverTime:
+          type: string
+          format: date-time
+          description: Current UTC time on the server at the moment the response was sent. Devices can use this for clock drift correction.
+          example: "2026-04-04T08:23:20.456Z"
+
+    UploadAcceptedResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [accepted]
+          example: accepted
+        message:
+          type: string
+          example: "Image accepted for background processing"
+        apiVersion:
+          type: string
+          example: v1
+        protocolVersion:
+          type: string
+          example: "1.0"
+        protocolWarning:
+          type: string
+          nullable: true
+          example: null
+        correlationId:
+          type: string
+          example: "CT-M8X3K2-A1B2"
+        trapId:
+          type: string
+          example: "TRAP-007"
+        captureTime:
+          type: string
+          format: date-time
+          example: "2026-04-04T08:23:01Z"
+        serverTime:
+          type: string
+          format: date-time
+          description: Current UTC time on the server at the moment the response was sent. Devices can use this for clock drift correction.
+          example: "2026-04-04T08:23:06.123Z"
+
+    # --- Utility Responses ---
+    TimeSyncResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: Current server UTC time.
+          example: "2026-04-04T08:30:00.000Z"
+        apiVersion:
+          type: string
+          example: v1
+        protocolVersion:
+          type: string
+          example: "1.0"
+        protocolWarning:
+          type: string
+          nullable: true
+          example: null
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok]
+          example: ok
+        timestamp:
+          type: string
+          format: date-time
+          example: "2026-04-04T08:30:00.000Z"
+        apiVersion:
+          type: string
+          example: v1
+        protocolVersion:
+          type: string
+          example: "1.0"
+        supportedProtocolVersions:
+          type: array
+          items:
+            type: string
+          example: ["1.0"]
+
+    VersionResponse:
+      type: object
+      properties:
+        apiVersion:
+          type: string
+          example: v1
+        supportedProtocolVersions:
+          type: array
+          items:
+            type: string
+          example: ["1.0"]
+        defaultProtocolVersion:
+          type: string
+          example: "1.0"
+        strictProtocolVersion:
+          type: boolean
+          description: When `true`, requests with unsupported protocol versions are rejected with `426`.
+          example: false
+        endpoints:
+          type: object
+          properties:
+            versionedBase:
+              type: string
+              example: "/api/v1"
+            legacyCompat:
+              type: boolean
+              example: true
+
+    # --- Debug Responses ---
+    AggregationSnapshot:
+      type: object
+      properties:
+        activeAggregationCount:
+          type: integer
+          description: Number of open cohorts currently accumulating images.
+          example: 1
+        inFlightUploadCount:
+          type: integer
+          description: Number of uploads being processed right now (Cloudinary → AI → queue).
+          example: 2
+        aggregations:
+          type: array
+          items:
+            type: object
+            properties:
+              aggKey:
+                type: string
+                description: "Cohort key: trapId:clientId:triggerTime"
+                example: "TRAP-007:CLIENT-42:2026-04-04T08:23:00Z"
+              trapId:
+                type: string
+                example: "TRAP-007"
+              count:
+                type: integer
+                description: Number of images currently in this cohort.
+                example: 2
+        inFlightUploads:
+          type: array
+          items:
+            type: object
+            properties:
+              uploadKey:
+                type: string
+                example: "TRAP-007:CLIENT-42:2026-04-04T08:23:01Z:1743752581234"
+              trapId:
+                type: string
+                example: "TRAP-007"
+              clientId:
+                type: string
+                example: "CLIENT-42"
+              captureTime:
+                type: string
+                format: date-time
+                example: "2026-04-04T08:23:01Z"
+              correlationId:
+                type: string
+                example: "CT-M8X3K2-A1B2"
+              startedAt:
+                type: string
+                format: date-time
+                example: "2026-04-04T08:23:05.123Z"
+              stage:
+                type: string
+                enum: [accepted, processing]
+                description: Current stage of this in-flight upload.
+                example: processing
+
+    # --- Error Responses ---
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          example: "Missing required fields: trapId, clientId, captureTime, image"
+
+    ErrorResponseWithDetails:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          example: "Processing failed"
+        correlationId:
+          type: string
+          example: "CT-M8X3K2-A1B2"
+        details:
+          description: Additional error context from the failing downstream service.
+          example: "connect ECONNREFUSED 127.0.0.1:8000"
+
+    VersionUpgradeResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Unsupported protocolVersion '2.0'"
+        supportedProtocolVersions:
+          type: array
+          items:
+            type: string
+          example: ["1.0"]
+        defaultProtocolVersion:
+          type: string
+          example: "1.0"
