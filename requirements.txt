@@ -8,9 +8,8 @@ pillow>=10.0.0
 numpy>=1.24.0
 torch>=2.0.0
 open-clip-torch>=2.20.0
-
-# MegaDetector
-megadetector>=5.0.0
+opencv-python>=4.9.0
+# MegaDetector v5 is loaded via torch.hub (ultralytics/yolov5) — no extra pip package required
 
 # Utilities
 httpx>=0.25.0
