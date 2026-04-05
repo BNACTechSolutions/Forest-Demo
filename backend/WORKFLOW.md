@@ -52,7 +52,7 @@ the Edge Ingestion Server.  Along with the image file it sends:
 - **temperature** — the ambient temperature reading (optional)
 - **metadata** — a small JSON payload that includes:
   - `triggerTime` — when the motion sensor actually fired (slightly before capture)
-  - `pppStartTime` / `pppConnectedTime` — when the camera's cellular modem started and connected (these are used for performance diagnostics)
+  - `internetConnectionStartTime` / `internetConnectedTime` — when the camera started network connection and when it became connected (used for performance diagnostics)
   - `protocolVersion` — the protocol version the firmware uses
 
 #### 2. Field validation
@@ -151,7 +151,7 @@ aggregates results across all images in the cohort:
   average score are used.
 - **Best image** — the image containing the highest-confidence detection is
   selected as the "best" image for display in the dashboard.
-- **Timing summary** — trigger time, PPP connection time, AI start/end times,
+- **Timing summary** — trigger time, internet connection timing, AI start/end times,
   and total end-to-end delay are all included.
 - **Temperature readings** — gathered from every image in the cohort.
 
@@ -297,7 +297,7 @@ stakeholder expectations.
 | Stage | Typical time |
 |---|---|
 | Camera triggers and captures image | 0–2 seconds |
-| Cellular modem starts (PPP) | 2–5 seconds |
+| Cellular modem starts network connection | 2–5 seconds |
 | Modem connects to network | 5–10 seconds |
 | Image uploaded to Edge Server | 10–20 seconds |
 | Image stored in Cloudinary | +1–3 seconds |

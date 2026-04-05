@@ -124,8 +124,8 @@ paths:
                     {
                       "triggerTime": "2026-04-04T08:23:00Z",
                       "captureTime": "2026-04-04T08:23:01Z",
-                      "pppStartTime": "2026-04-04T08:23:02Z",
-                      "pppConnectedTime": "2026-04-04T08:23:04Z",
+                      "internetConnectionStartTime": "2026-04-04T08:23:02Z",
+                      "internetConnectedTime": "2026-04-04T08:23:04Z",
                       "protocolVersion": "1.0"
                     }
                 image:
@@ -622,10 +622,10 @@ components:
               type: number
               nullable: true
               example: 14
-            pppConnectionTime:
+            internetConnectedDelaySeconds:
               type: number
               nullable: true
-              description: Seconds between PPP start and PPP connected events.
+              description: Seconds between internet connection start and internet connected events.
               example: 2
         serverTime:
           type: string

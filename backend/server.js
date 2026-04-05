@@ -161,8 +161,8 @@ const finalizeAggregation = async (aggKey) => {
     // Extract timing information (same for all images)
     const firstImage = images[0];
     const triggerTime = firstImage.deviceTimings?.triggerTime || null;
-    const pppStartTime = firstImage.deviceTimings?.pppStartTime || null;
-    const pppConnectedTime = firstImage.deviceTimings?.pppConnectedTime || null;
+    const internetConnectionStartTime = firstImage.deviceTimings?.internetConnectionStartTime || null;
+    const internetConnectedTime = firstImage.deviceTimings?.internetConnectedTime || null;
 
     // AI processing times (aggregate across all images)
     const aiStartTime = images[0].processingStartTime || images[0].processingTime;
@@ -233,8 +233,8 @@ const finalizeAggregation = async (aggKey) => {
       eventStartTime: eventStart,  // Server receipt time (clean, no device 1970)
       eventEndTime: eventEnd,
       triggerTime,
-      pppStartTime,
-      pppConnectedTime,
+      internetConnectionStartTime,
+      internetConnectedTime,
       aiProcessingStartTime: aiStartTime,
       aiProcessingEndTime: aiEndTime,
       processingDelaySeconds: totalProcessingDelaySeconds,
@@ -412,8 +412,8 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
       timing = {
         triggerTime: parsed.triggerTime || null,
         captureTimeDevice: parsed.captureTime || null,
-        pppStartTime: parsed.pppStartTime || null,
-        pppConnectedTime: parsed.pppConnectedTime || null,
+        internetConnectionStartTime: parsed.internetConnectionStartTime || null,
+        internetConnectedTime: parsed.internetConnectedTime || null,
       };
       log.debug(`Metadata parsed — trigger time: ${timing.triggerTime}, capture time: ${timing.captureTimeDevice}`);
     } catch (e) {
@@ -526,9 +526,9 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
 
   const delays = {
     triggerToCapture: calculateDelayMs(timing.triggerTime, timing.captureTimeDevice),
-    captureToPppStart: calculateDelayMs(timing.captureTimeDevice, timing.pppStartTime),
-    pppStartToConnected: calculateDelayMs(timing.pppStartTime, timing.pppConnectedTime),
-    pppConnectedToProcessing: calculateDelayMs(timing.pppConnectedTime, processingTime),
+    captureToInternetConnectionStart: calculateDelayMs(timing.captureTimeDevice, timing.internetConnectionStartTime),
+    internetConnectionStartToConnected: calculateDelayMs(timing.internetConnectionStartTime, timing.internetConnectedTime),
+    internetConnectedToProcessing: calculateDelayMs(timing.internetConnectedTime, processingTime),
     totalDeviceToProcessing: calculateDelayMs(timing.triggerTime, processingTime),
   };
 
@@ -554,8 +554,8 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
     deviceTimings: {
       triggerTime: timing.triggerTime,
       captureTimeDevice: timing.captureTimeDevice,
-      pppStartTime: timing.pppStartTime,
-      pppConnectedTime: timing.pppConnectedTime,
+      internetConnectionStartTime: timing.internetConnectionStartTime,
+      internetConnectedTime: timing.internetConnectedTime,
     },
     aiTimings: aiTimings || null,
     processingStages: {
@@ -574,7 +574,7 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
     processingDelaySeconds: totalDelay,
     timingFeedback: {
       totalDelay,
-      pppConnectionTime: delays.pppStartToConnected,
+      internetConnectedDelaySeconds: delays.internetConnectionStartToConnected,
     },
   };
 };
@@ -770,7 +770,7 @@ const dailyStatusHandler = async (req, res) => {
           { timeout: 10000, headers: { 'x-correlation-id': correlationId } }
         );
         log.info(`Daily status forwarded to backend successfully`);
-        return res.status(201).json({ ...response.data, correlationId });
+        return res.status(201).json({ ...response.data, correlationId, serverTime: new Date().toISOString() });
       } catch (fwdErr) {
         log.error(`Failed to forward daily status to backend: ${fwdErr.message}`);
         return res.status(500).json({
@@ -788,6 +788,7 @@ const dailyStatusHandler = async (req, res) => {
         protocolWarning: versionInfo.fallbackReason,
         correlationId,
         trapId,
+        serverTime: new Date().toISOString(),
       });
     }
   } catch (error) {
