@@ -118,16 +118,18 @@ paths:
                   type: string
                   description: |
                     JSON string containing detailed device timing fields.
-                    `triggerTime` is mandatory — it is the primary key used to
+                    triggerTime is mandatory — it is the primary key used to
                     group images from the same detection event into one cohort.
-                  example: |
-                    {
-                      "triggerTime": "2026-04-04T08:23:00Z",
-                      "captureTime": "2026-04-04T08:23:01Z",
-                      "internetConnectionStartTime": "2026-04-04T08:23:02Z",
-                      "internetConnectedTime": "2026-04-04T08:23:04Z",
-                      "protocolVersion": "1.0"
-                    }
+
+                    This field is written by the Camera Trap firmware/device.
+                    Required metadata payload shape:
+                      {
+                        "triggerTime": "2026-04-04T08:23:00Z",
+                        "captureTime": "2026-04-04T08:23:01Z",
+                        "internetConnectionStartTime": "2026-04-04T08:23:02Z",
+                        "internetConnectedTime": "2026-04-04T08:23:04Z"
+                      }
+                  example: '{"triggerTime":"2026-04-04T08:23:00Z","captureTime":"2026-04-04T08:23:01Z","internetConnectionStartTime":"2026-04-04T08:23:02Z","internetConnectedTime":"2026-04-04T08:23:04Z"}'
                 image:
                   type: string
                   format: binary
