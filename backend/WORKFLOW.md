@@ -35,7 +35,7 @@ event appears in the dashboard.
 | 3 | Edge Ingestion Server + Cloudinary | Uploads the raw image and creates a thumbnail | Image is safely stored in cloud image storage |
 | 4 | Edge Ingestion Server + AI Server | Sends the image for animal/person detection and species classification | AI returns detections, species labels, and confidence scores |
 | 5 | Edge Ingestion Server | Returns success or accepted response to the device, including timing feedback | Device knows the image was received |
-| 6 | Edge Ingestion Server | Adds the image to a cohort grouped by `trapId + clientId + triggerTime` | Multiple related images are bundled into one event |
+| 6 | Edge Ingestion Server | Adds the image to a cohort grouped by `clientId + trapId + triggerTime` | Multiple related images are bundled into one event |
 | 7 | Edge Ingestion Server | Waits until either 60 seconds pass with no new image or the cohort reaches 5 images | Cohort is ready to be finalised |
 | 8 | Edge Ingestion Server + Backend / BFF | Aggregates all images, chooses the best one, prepares the final event, and stores it in the database | Dashboard receives one final detection event |
 
@@ -63,10 +63,9 @@ missing, it returns a clear error immediately.
 
 #### 3. Client / trap verification
 
-The server calls the internal backend to confirm that the `trapId` is a real,
-registered camera and that the `clientId` provided by the device matches the
-one on record.  This prevents one client's device from accidentally (or
-maliciously) posting data under another client's account.
+The server calls the internal backend to confirm that the (`clientId`, `trapId`)
+pair matches a real, registered camera.  This prevents one client's device from
+accidentally (or maliciously) posting data under another client's account.
 
 #### 4. Image stored in Cloudinary
 
@@ -109,7 +108,7 @@ After AI analysis the image is placed into a **cohort**.  A cohort is a group
 of images that belong to the same single trigger event — because one motion
 trigger can capture multiple photos in quick succession.
 
-The cohort key is:  `trapId + clientId + triggerTime`
+The cohort key is:  `clientId + trapId + triggerTime`
 
 - **New trigger** → a new cohort is created and a 60-second countdown begins.
 - **Same trigger, another image arrives** → the image is added to the existing
@@ -259,7 +258,7 @@ classification, the result is matched against the client's own species list.
 ### The camera sends a duplicate image (same trapId + captureTime)
 
 Each upload creates a distinct entry in the in-flight tracking table using a
-unique key (`trapId:clientId:captureTime:timestamp`).  Duplicate payloads —
+unique key (`clientId:trapId:captureTime:timestamp`).  Duplicate payloads —
 rare in practice — will be processed independently and both images will appear
 in Cloudinary.  They will be grouped into the same cohort if they carry the
 same `triggerTime`.

@@ -96,7 +96,7 @@ const UPLOAD_ACK_IMMEDIATE = String(process.env.UPLOAD_ACK_IMMEDIATE || "false")
 const AI_PROCESS_RETRIES = Number(process.env.AI_PROCESS_RETRIES || process.env.UPLOAD_PROCESS_RETRIES || 2);
 const UPLOAD_RETRY_DELAY_MS = Number(process.env.UPLOAD_RETRY_DELAY_MS || 5000);
 const HUMAN_INTERVENTION_WARNING = 'HUMAN_INTERVENTION_REQUIRED: AI processing failed for this image set. Please review images manually and confirm priority.';
-const aggregations = new Map(); // aggKey (trapId:clientId:triggerTime) -> { trapId, images: [], timer }
+const aggregations = new Map(); // aggKey (clientId:trapId:triggerTime) -> { trapId, images: [], timer }
 const inFlightUploads = new Map(); // uploadKey -> { trapId, clientId, captureTime, startedAt, stage }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -132,14 +132,14 @@ const createLogger = (correlationId, _deprecated = {}) => {
   };
 };
 
-const lookupTrapClientInfo = async (trapId, { correlationId, log } = {}) => {
-  log?.debug(`Looking for trap with id: ${trapId}`);
+const lookupTrapClientInfo = async (clientId, trapId, { correlationId, log } = {}) => {
+  log?.debug(`Looking for trap with clientId: ${clientId}, trapId: ${trapId}`);
   const { data: clientInfo } = await axios.post(
     process.env.BFF_CLIENT_LOOKUP_URL,
-    { trapId },
+    { clientId, trapId },
     { timeout: 8000, headers: correlationId ? { 'x-correlation-id': correlationId } : {} }
   );
-  log?.info(`Trap found — id: ${trapId}, client: ${clientInfo?.clientId || 'unknown'}`);
+  log?.info(`Trap found — client: ${clientInfo?.clientId || 'unknown'}, id: ${trapId}`);
   return clientInfo;
 };
 
@@ -423,7 +423,7 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
   }
 
   // Step 1: Client lookup
-  const clientInfo = validatedClientInfo || await lookupTrapClientInfo(trapId, { correlationId, log });
+  const clientInfo = validatedClientInfo || await lookupTrapClientInfo(ctClientId, trapId, { correlationId, log });
 
   if (!clientInfo?.clientId) {
     throw new Error("Client not found for trapId");
@@ -532,9 +532,9 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
     totalDeviceToProcessing: calculateDelayMs(timing.triggerTime, processingTime),
   };
 
-  // Queue image into per-trap+client+trigger aggregation for final event write.
+  // Queue image into per-client+trap+trigger aggregation for final event write.
   const effectiveClientId = ctClientId;
-  const aggKey = `${trapId}:${effectiveClientId}:${timing.triggerTime}`;
+  const aggKey = `${effectiveClientId}:${trapId}:${timing.triggerTime}`;
   log.debug(`Queuing image for event grouping — key: ${aggKey}`);
   addImageToAggregation(aggKey, trapId, clientInfo, {
     correlationId,
@@ -623,7 +623,7 @@ const uploadHandler = async (req, res) => {
 
     let validatedClientInfo = null;
     try {
-      validatedClientInfo = await lookupTrapClientInfo(trapId, { correlationId, log });
+      validatedClientInfo = await lookupTrapClientInfo(clientId, trapId, { correlationId, log });
     } catch (lookupErr) {
       const status = lookupErr?.response?.status || 500;
       return res.status(status).json({
@@ -632,7 +632,7 @@ const uploadHandler = async (req, res) => {
     }
 
     if (!validatedClientInfo?.clientId) {
-      return res.status(404).json({ error: "Trap not found" });
+      return res.status(404).json({ error: "Trap not found for provided clientId and trapId" });
     }
 
     if (String(validatedClientInfo.clientId) !== String(clientId)) {
@@ -652,7 +652,7 @@ const uploadHandler = async (req, res) => {
       serverReceiptTime,
       validatedClientInfo,
     };
-    uploadKey = `${trapId}:${clientId}:${captureTime}:${Date.now()}`;
+    uploadKey = `${clientId}:${trapId}:${captureTime}:${Date.now()}`;
     inFlightUploads.set(uploadKey, {
       trapId,
       clientId,

@@ -102,8 +102,9 @@ paths:
                   type: string
                   description: |
                     Client identifier as provisioned on the device. Must match
-                    the `clientId` stored for this `trapId` in the backend; the
-                    server rejects mismatches with `403`.
+                    the camera trap found using the (`clientId`, `trapId`)
+                    pair in the backend; the server rejects mismatches with
+                    `403`.
                   example: "CLIENT-42"
                 captureTime:
                   type: string
@@ -193,13 +194,13 @@ paths:
               example:
                 error: "clientId does not match trap assignment"
         '404':
-          description: No camera trap record found for the given `trapId`.
+          description: No camera trap record found for the given (`clientId`, `trapId`) pair.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
-                error: "Trap not found"
+                error: "Trap not found for provided clientId and trapId"
         '426':
           description: |
             Unsupported protocol version and the server is running in strict mode
@@ -761,8 +762,8 @@ components:
             properties:
               aggKey:
                 type: string
-                description: "Cohort key: trapId:clientId:triggerTime"
-                example: "TRAP-007:CLIENT-42:2026-04-04T08:23:00Z"
+                description: "Cohort key: clientId:trapId:triggerTime"
+                example: "CLIENT-42:TRAP-007:2026-04-04T08:23:00Z"
               trapId:
                 type: string
                 example: "TRAP-007"
@@ -777,7 +778,7 @@ components:
             properties:
               uploadKey:
                 type: string
-                example: "TRAP-007:CLIENT-42:2026-04-04T08:23:01Z:1743752581234"
+                example: "CLIENT-42:TRAP-007:2026-04-04T08:23:01Z:1743752581234"
               trapId:
                 type: string
                 example: "TRAP-007"
