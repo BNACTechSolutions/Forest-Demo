@@ -168,14 +168,15 @@ The device sends:
 
 | Field | Meaning |
 |---|---|
+| `clientId` | Which client owns the camera |
 | `trapId` | Which camera |
 | `battery_voltage` | Current battery level |
 | `sd_free` / `sd_used` | SD card space in MB |
 | `total_triggers_today` | How many motion triggers fired today |
 | `failed_uploads` | How many uploads failed to reach the server today |
 
-The Edge Ingestion Server validates that `trapId` is present and forwards the
-report to the internal backend for storage.  If the forwarding fails, the
+The Edge Ingestion Server validates the (`clientId`, `trapId`) pair and then
+forwards the report to the internal backend for storage.  If the forwarding fails, the
 server returns an error to the device.
 
 **Why is this useful?**  Battery and SD card data powers the health dashboard.

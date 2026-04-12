@@ -746,20 +746,32 @@ const dailyStatusHandler = async (req, res) => {
       });
     }
 
-    const {
-      trapId,
-      sd_free,
-      sd_used,
-      battery_voltage,
-      total_triggers_today,
-      failed_uploads,
-    } = req.body;
+    const { clientId, trapId } = req.body;
+    const serverTime = new Date().toISOString();
 
-    if (!trapId) {
-      return res.status(400).json({ error: "trapId required" });
+    if (!clientId || !trapId) {
+      return res.status(400).json({ error: "clientId and trapId required" });
     }
 
-    log.info(`Daily status received from trap ${trapId}`);
+    let validatedClientInfo = null;
+    try {
+      validatedClientInfo = await lookupTrapClientInfo(clientId, trapId, { correlationId, log });
+    } catch (lookupErr) {
+      const status = lookupErr?.response?.status || 500;
+      return res.status(status).json({
+        error: lookupErr?.response?.data?.error || "Failed to validate trap",
+      });
+    }
+
+    if (!validatedClientInfo?.clientId) {
+      return res.status(404).json({ error: "Trap not found for provided clientId and trapId" });
+    }
+
+    if (String(validatedClientInfo.clientId) !== String(clientId)) {
+      return res.status(403).json({ error: "clientId does not match trap assignment" });
+    }
+
+    log.info(`Daily status received from client ${clientId}, trap ${trapId}`);
 
     // Forward to internal backend
     if (process.env.BFF_DAILY_STATUS_URL) {
@@ -770,7 +782,7 @@ const dailyStatusHandler = async (req, res) => {
           { timeout: 10000, headers: { 'x-correlation-id': correlationId } }
         );
         log.info(`Daily status forwarded to backend successfully`);
-        return res.status(201).json({ ...response.data, correlationId, serverTime: new Date().toISOString() });
+        return res.status(201).json({ ...response.data, correlationId, serverTime });
       } catch (fwdErr) {
         log.error(`Failed to forward daily status to backend: ${fwdErr.message}`);
         return res.status(500).json({
@@ -788,7 +800,7 @@ const dailyStatusHandler = async (req, res) => {
         protocolWarning: versionInfo.fallbackReason,
         correlationId,
         trapId,
-        serverTime: new Date().toISOString(),
+        serverTime,
       });
     }
   } catch (error) {

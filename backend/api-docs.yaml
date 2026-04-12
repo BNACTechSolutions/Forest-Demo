@@ -243,8 +243,9 @@ paths:
       description: |
         Called once per day by each camera trap to report battery level, SD card
         usage, trigger count, and upload failure count.  The server forwards this
-        payload verbatim to the internal backend storage service
+        payload to the internal backend storage service
         (`BFF_DAILY_STATUS_URL`).
+        The `(clientId, trapId)` pair is validated before forwarding.
       requestBody:
         required: true
         content:
@@ -274,14 +275,19 @@ paths:
                   correlationId:
                     type: string
                     example: "CT-M8X3K2-A1B2"
+                  serverTime:
+                    type: string
+                    format: date-time
+                    description: Current server UTC timestamp when the response is emitted.
+                    example: "2026-04-12T09:30:45.123Z"
         '400':
-          description: "`trapId` field is missing from the request body."
+          description: "Required identity fields are missing from the request body."
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
               example:
-                error: "trapId required"
+                error: "clientId and trapId required"
         '426':
           description: Unsupported protocol version (strict mode only).
           content:
@@ -547,8 +553,13 @@ components:
     DailyStatusRequest:
       type: object
       required:
+        - clientId
         - trapId
       properties:
+        clientId:
+          type: string
+          description: Client identifier. Must match the owner of `trapId`.
+          example: "CLIENT-42"
         trapId:
           type: string
           description: Unique identifier of the camera trap device.
