@@ -101,6 +101,13 @@ const inFlightUploads = new Map(); // uploadKey -> { trapId, clientId, captureTi
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const normalizeImgType = (value) => {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (!normalized) return 'S';
+  if (normalized === 'S' || normalized === 'T') return normalized;
+  return null;
+};
+
 // ====================
 // Correlation ID & Logger
 // ====================
@@ -163,6 +170,25 @@ const finalizeAggregation = async (aggKey) => {
     const triggerTime = firstImage.deviceTimings?.triggerTime || null;
     const internetConnectionStartTime = firstImage.deviceTimings?.internetConnectionStartTime || null;
     const internetConnectedTime = firstImage.deviceTimings?.internetConnectedTime || null;
+    const imgType = normalizeImgType(firstImage.imgType) || 'S';
+    const dataInitiationTime = firstImage.deviceTimings?.dataInitiationTime || null;
+    const dataTransferInitiationTime = firstImage.deviceTimings?.dataTransferInitiationTime || null;
+    const serverReceivedTime = firstImage.serverReceiptTime || null;
+    const totalImageSizeBytes = images.reduce((sum, img) => sum + Number(img.imageSizeBytes || 0), 0);
+    let transferDurationMs = null;
+    let dataSpeedBytesPerSec = null;
+
+    if (dataTransferInitiationTime && serverReceivedTime) {
+      const startMs = new Date(dataTransferInitiationTime).getTime();
+      const endMs = new Date(serverReceivedTime).getTime();
+      const diffMs = endMs - startMs;
+      if (Number.isFinite(diffMs) && diffMs > 0) {
+        transferDurationMs = diffMs;
+        if (totalImageSizeBytes > 0) {
+          dataSpeedBytesPerSec = totalImageSizeBytes / (diffMs / 1000);
+        }
+      }
+    }
 
     // AI processing times (aggregate across all images)
     const aiStartTime = images[0].processingStartTime || images[0].processingTime;
@@ -235,6 +261,12 @@ const finalizeAggregation = async (aggKey) => {
       triggerTime,
       internetConnectionStartTime,
       internetConnectedTime,
+      dataInitiationTime,
+      dataTransferInitiationTime,
+      serverReceivedTime,
+      imageSizeBytes: totalImageSizeBytes || null,
+      transferDurationMs,
+      dataSpeedBytesPerSec,
       aiProcessingStartTime: aiStartTime,
       aiProcessingEndTime: aiEndTime,
       processingDelaySeconds: totalProcessingDelaySeconds,
@@ -258,6 +290,7 @@ const finalizeAggregation = async (aggKey) => {
       location: clientInfo.location || null,
       project: clientInfo.project || null,
       temperatureValues: images.map((i) => i.temperature).filter((t) => t != null),
+      imgType,
       totalImagesReceived: images.length,
       aggregatedDetections,
       bestSpecies: bestSpecies,
@@ -394,7 +427,7 @@ const uploadToCloudinary = (buffer, originalName, trapId) => {
 // ====================
 // Main Route
 // ====================
-const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, temperature, metadata, fileBuffer, fileName, serverReceiptTime, validatedClientInfo, protocolVersion, correlationId }) => {
+const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, temperature, imgType, metadata, fileBuffer, fileName, serverReceiptTime, validatedClientInfo, protocolVersion, correlationId }) => {
   const log = createLogger(correlationId, { trapId });
   log.info(`New image upload from trap ${trapId} — capture time: ${captureTime}`);
   log.debug(`Client ID from device: ${ctClientId}`);
@@ -414,6 +447,8 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
         captureTimeDevice: parsed.captureTime || null,
         internetConnectionStartTime: parsed.internetConnectionStartTime || null,
         internetConnectedTime: parsed.internetConnectedTime || null,
+        dataInitiationTime: parsed.dataInitiationTime || parsed.data_initiation_time || null,
+        dataTransferInitiationTime: parsed.dataTransferInitiationTime || parsed.data_transfer_initiation_time || parsed.transferStartTime || null,
       };
       log.debug(`Metadata parsed — trigger time: ${timing.triggerTime}, capture time: ${timing.captureTimeDevice}`);
     } catch (e) {
@@ -534,7 +569,7 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
 
   // Queue image into per-client+trap+trigger aggregation for final event write.
   const effectiveClientId = ctClientId;
-  const aggKey = `${effectiveClientId}:${trapId}:${timing.triggerTime}`;
+  const aggKey = `${effectiveClientId}:${trapId}:${imgType}:${timing.triggerTime}`;
   log.debug(`Queuing image for event grouping — key: ${aggKey}`);
   addImageToAggregation(aggKey, trapId, clientInfo, {
     correlationId,
@@ -550,12 +585,16 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
     warnings,
     metadataParseError,
     temperature: tempValue,
+    imgType,
+    imageSizeBytes: fileBuffer?.length || 0,
     processingDelaySeconds: delays.totalDeviceToProcessing,
     deviceTimings: {
       triggerTime: timing.triggerTime,
       captureTimeDevice: timing.captureTimeDevice,
       internetConnectionStartTime: timing.internetConnectionStartTime,
       internetConnectedTime: timing.internetConnectedTime,
+      dataInitiationTime: timing.dataInitiationTime,
+      dataTransferInitiationTime: timing.dataTransferInitiationTime,
     },
     aiTimings: aiTimings || null,
     processingStages: {
@@ -587,6 +626,7 @@ const uploadHandler = async (req, res) => {
     const serverReceiptTime = new Date().toISOString();
     const { trapId, captureTime, temperature, metadata, clientId } = req.body;
     const file = req.file;
+    const imgType = normalizeImgType(req.get('IMG_TYPE') || req.get('x-img-type'));
     log.info(`Upload request received — trap: ${trapId}, client: ${clientId}`);
 
     if (!trapId || !clientId || !captureTime || !file) {
@@ -597,6 +637,10 @@ const uploadHandler = async (req, res) => {
 
     if (!metadata) {
       return res.status(400).json({ error: "metadata is required and must include triggerTime" });
+    }
+
+    if (!imgType) {
+      return res.status(400).json({ error: "IMG_TYPE header must be S or T" });
     }
 
     let parsedMetadata = null;
@@ -644,6 +688,7 @@ const uploadHandler = async (req, res) => {
       clientId,
       captureTime,
       temperature,
+      imgType,
       metadata,
       protocolVersion: versionInfo.effectiveVersion,
       correlationId,

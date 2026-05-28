@@ -53,7 +53,8 @@ paths:
         capture metadata.  The server performs the following pipeline steps and
         then returns:
 
-        1. **Validation** – required fields and `metadata.triggerTime` are checked.
+          1. **Validation** – required fields and `metadata.triggerTime` are checked.
+            The `IMG_TYPE` header is also validated (`S` = standard, `T` = trial).
         2. **Client lookup** – the `trapId` is resolved to a client record via the
            internal BFF lookup service; the supplied `clientId` is verified against
            the record.
@@ -128,7 +129,9 @@ paths:
                         "triggerTime": "2026-04-04T08:23:00Z",
                         "captureTime": "2026-04-04T08:23:01Z",
                         "internetConnectionStartTime": "2026-04-04T08:23:02Z",
-                        "internetConnectedTime": "2026-04-04T08:23:04Z"
+                        "internetConnectedTime": "2026-04-04T08:23:04Z",
+                        "dataInitiationTime": "2026-04-04T08:22:58Z",
+                        "dataTransferInitiationTime": "2026-04-04T08:23:03Z"
                       }
                   example: '{"triggerTime":"2026-04-04T08:23:00Z","captureTime":"2026-04-04T08:23:01Z","internetConnectionStartTime":"2026-04-04T08:23:02Z","internetConnectedTime":"2026-04-04T08:23:04Z"}'
                 image:
@@ -140,6 +143,7 @@ paths:
                 contentType: image/jpeg, image/png
       parameters:
         - $ref: '#/components/parameters/ProtocolVersionHeader'
+        - $ref: '#/components/parameters/ImgTypeHeader'
       responses:
         '200':
           description: Image processed successfully and queued for event aggregation.
@@ -181,6 +185,7 @@ paths:
             - `"metadata is required and must include triggerTime"`
             - `"metadata must be valid JSON"`
             - `"metadata.triggerTime is required for batch grouping"`
+            - `"IMG_TYPE header must be S or T"`
           content:
             application/json:
               schema:
@@ -229,6 +234,7 @@ paths:
         $ref: '#/paths/~1api~1v1~1upload/post/requestBody'
       parameters:
         - $ref: '#/components/parameters/ProtocolVersionHeader'
+        - $ref: '#/components/parameters/ImgTypeHeader'
       responses:
         $ref: '#/paths/~1api~1v1~1upload/post/responses'
 
@@ -525,6 +531,18 @@ components:
         Device protocol version.  If omitted or unrecognised the server falls
         back to `DEFAULT_PROTOCOL_VERSION`.  When `STRICT_PROTOCOL_VERSION=true`
         an unrecognised version is rejected with `426`.
+
+    ImgTypeHeader:
+      name: IMG_TYPE
+      in: header
+      required: false
+      schema:
+        type: string
+        enum: [S, T]
+        default: S
+      description: |
+        Upload type flag from camera-trap firmware.
+        `S` indicates standard upload, `T` indicates trial upload.
 
   headers:
     ApiVersion:
