@@ -503,6 +503,7 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
       imgType: 'T',
       correlationId,
       captureTime,
+      processingTime: serverReceiptTime,
       eventStartTime: serverReceiptTime,
       eventEndTime: serverReceiptTime,
       triggerTime: timing.triggerTime || null,
@@ -565,6 +566,9 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
       };
     } catch (postErr) {
       log.error(`Trial event rejected by backend — HTTP ${postErr.response?.status || 'unknown'}: ${postErr.message}`);
+      if (postErr.response?.data) {
+        log.error(`Trial backend response body: ${JSON.stringify(postErr.response.data)}`);
+      }
       throw postErr;
     }
   }
