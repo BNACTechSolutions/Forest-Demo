@@ -330,7 +330,7 @@ const finalizeAggregation = async (aggKey) => {
   }
 };
 
-const addImageToAggregation = (aggKey, trapId, clientInfo, perImage) => {
+const addImageToAggregation = (aggKey, trapId, clientInfo, perImage, { flushImmediately = false } = {}) => {
   let agg = aggregations.get(aggKey);
   const now = Date.now();
 
@@ -344,15 +344,21 @@ const addImageToAggregation = (aggKey, trapId, clientInfo, perImage) => {
       trapId,
       images: [],
       timer: null,
-      finalizeAt: now + AGGREGATION_WINDOW_MS,
+      finalizeAt: flushImmediately ? now : now + AGGREGATION_WINDOW_MS,
     };
     aggregations.set(aggKey, agg);
     scheduleFinalization(agg);
   } else {
-    // Reset finalization to 1 minute from the latest received image.
-    agg.finalizeAt = Date.now() + AGGREGATION_WINDOW_MS;
-    clearTimeout(agg.timer);
-    scheduleFinalization(agg);
+    if (flushImmediately) {
+      agg.finalizeAt = now;
+      clearTimeout(agg.timer);
+      scheduleFinalization(agg);
+    } else {
+      // Reset finalization to 1 minute from the latest received image.
+      agg.finalizeAt = Date.now() + AGGREGATION_WINDOW_MS;
+      clearTimeout(agg.timer);
+      scheduleFinalization(agg);
+    }
   }
 
   agg.images.push({ clientInfo, ...perImage });
@@ -360,7 +366,7 @@ const addImageToAggregation = (aggKey, trapId, clientInfo, perImage) => {
   const aggLog = createLogger(perImage.correlationId || aggKey, { trapId });
   aggLog.info(`Image ${agg.images.length} added to event group — will flush in ${secondsRemaining}s`);
   aggLog.debug(`Aggregation key: ${aggKey}`);
-  if (agg.images.length >= MAX_IMAGES_PER_EVENT) {
+  if (flushImmediately || agg.images.length >= MAX_IMAGES_PER_EVENT) {
     clearTimeout(agg.timer);
     // finalize asynchronously
     setImmediate(() => finalizeAggregation(aggKey));
@@ -431,6 +437,7 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
   const log = createLogger(correlationId, { trapId });
   log.info(`New image upload from trap ${trapId} — capture time: ${captureTime}`);
   log.debug(`Client ID from device: ${ctClientId}`);
+  const isTrialUpload = imgType === 'T';
 
   // 1. Parse temperature
   const tempValue = temperature ? parseFloat(temperature) : null;
@@ -490,36 +497,49 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
   let aiResponseReceivedAt = null;
   let aiTimings = null;
 
-  for (let attempt = 1; attempt <= maxAiAttempts; attempt += 1) {
-    const form = new FormData();
-    form.append("file", fileBuffer, fileName || "capture.jpg");
-    form.append("client_id", clientInfo.clientId);
-    form.append("run_sam", "false");
-    form.append("detector_threshold", "0.30");
-    form.append("topk_species", "3");
+  if (isTrialUpload) {
+    aiResponseReceivedAt = aiRequestSentAt;
+    aiTimings = {
+      requestSentAt: aiRequestSentAt,
+      responseReceivedAt: aiResponseReceivedAt,
+      durationMs: 0,
+      status: 'skipped',
+      attempts: 0,
+    };
+    aiResponse = { data: { detections: [], warnings: [] } };
+    log.info('Trial upload detected — skipping AI inference entirely');
+  } else {
+    for (let attempt = 1; attempt <= maxAiAttempts; attempt += 1) {
+      const form = new FormData();
+      form.append("file", fileBuffer, fileName || "capture.jpg");
+      form.append("client_id", clientInfo.clientId);
+      form.append("run_sam", "false");
+      form.append("detector_threshold", "0.30");
+      form.append("topk_species", "3");
 
-    log.debug(`Sending image to AI server (attempt ${attempt} of ${maxAiAttempts})`);
-    try {
-      aiResponse = await axios.post(process.env.AI_SERVER_URL, form, {
-        headers: { ...form.getHeaders(), 'x-correlation-id': correlationId },
-        timeout: 90000,
-      });
-      aiResponseReceivedAt = new Date().toISOString();
-      aiTimings = {
-        requestSentAt: aiRequestSentAt,
-        responseReceivedAt: aiResponseReceivedAt,
-        durationMs: new Date(aiResponseReceivedAt) - new Date(aiRequestSentAt),
-        status: 'ok',
-        attempts: attempt,
-      };
-      log.debug(`AI server responded in ${aiTimings.durationMs}ms (attempt ${attempt})`);
-      break;
-    } catch (err) {
-      aiError = err;
-      const lastAttempt = attempt === maxAiAttempts;
-      log.warn(`AI attempt ${attempt}/${maxAiAttempts} failed: ${err?.message || 'unknown error'}`);
-      if (!lastAttempt) {
-        await sleep(UPLOAD_RETRY_DELAY_MS * attempt);
+      log.debug(`Sending image to AI server (attempt ${attempt} of ${maxAiAttempts})`);
+      try {
+        aiResponse = await axios.post(process.env.AI_SERVER_URL, form, {
+          headers: { ...form.getHeaders(), 'x-correlation-id': correlationId },
+          timeout: 90000,
+        });
+        aiResponseReceivedAt = new Date().toISOString();
+        aiTimings = {
+          requestSentAt: aiRequestSentAt,
+          responseReceivedAt: aiResponseReceivedAt,
+          durationMs: new Date(aiResponseReceivedAt) - new Date(aiRequestSentAt),
+          status: 'ok',
+          attempts: attempt,
+        };
+        log.debug(`AI server responded in ${aiTimings.durationMs}ms (attempt ${attempt})`);
+        break;
+      } catch (err) {
+        aiError = err;
+        const lastAttempt = attempt === maxAiAttempts;
+        log.warn(`AI attempt ${attempt}/${maxAiAttempts} failed: ${err?.message || 'unknown error'}`);
+        if (!lastAttempt) {
+          await sleep(UPLOAD_RETRY_DELAY_MS * attempt);
+        }
       }
     }
   }
@@ -602,7 +622,7 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
       aiRequestSentAt: aiRequestSentAt || null,
       aiResponseReceivedAt: aiResponseReceivedAt || null,
     },
-  });
+  }, { flushImmediately: isTrialUpload });
 
   const totalDelay = delays.totalDeviceToProcessing ?? Math.round((aiTimings?.durationMs || 0) / 1000);
   log.info(`Image processing complete — ${detections.length} detection(s), total delay: ${totalDelay}s`);
@@ -627,6 +647,7 @@ const uploadHandler = async (req, res) => {
     const { trapId, captureTime, temperature, metadata, clientId } = req.body;
     const file = req.file;
     const imgType = normalizeImgType(req.get('IMG_TYPE') || req.get('x-img-type'));
+    const shouldAckImmediately = UPLOAD_ACK_IMMEDIATE || imgType === 'T';
     log.info(`Upload request received — trap: ${trapId}, client: ${clientId}`);
 
     if (!trapId || !clientId || !captureTime || !file) {
@@ -707,11 +728,13 @@ const uploadHandler = async (req, res) => {
       stage: 'accepted',
     });
 
-    if (UPLOAD_ACK_IMMEDIATE) {
+    if (shouldAckImmediately) {
       res.set('x-correlation-id', correlationId);
       res.status(202).json({
         status: "accepted",
-        message: "Image accepted for background processing",
+        message: imgType === 'T'
+          ? "Trial image accepted for background processing"
+          : "Image accepted for background processing",
         apiVersion: API_CURRENT_VERSION,
         protocolVersion: versionInfo.effectiveVersion,
         protocolWarning: versionInfo.fallbackReason,
