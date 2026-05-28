@@ -489,6 +489,86 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
   });
   log.info(`Cloudinary upload complete — public id: ${publicId}`);
 
+  if (isTrialUpload) {
+    const dataTransferInitiationTime = timing.dataTransferInitiationTime || serverReceiptTime;
+    const imageSizeBytes = fileBuffer?.length || 0;
+    const transferDurationMs = Math.max(new Date(serverReceiptTime).getTime() - new Date(dataTransferInitiationTime).getTime(), 0) || null;
+    const dataSpeedBytesPerSec = transferDurationMs && imageSizeBytes > 0
+      ? imageSizeBytes / (transferDurationMs / 1000)
+      : null;
+
+    const trialPayload = {
+      trapId,
+      clientId: clientInfo.clientId,
+      imgType: 'T',
+      correlationId,
+      captureTime,
+      eventStartTime: serverReceiptTime,
+      eventEndTime: serverReceiptTime,
+      triggerTime: timing.triggerTime || null,
+      internetConnectionStartTime: timing.internetConnectionStartTime || null,
+      internetConnectedTime: timing.internetConnectedTime || null,
+      dataInitiationTime: timing.dataInitiationTime || timing.internetConnectedTime || null,
+      dataTransferInitiationTime,
+      serverReceivedTime: serverReceiptTime,
+      imageSizeBytes,
+      transferDurationMs,
+      dataSpeedBytesPerSec,
+      aiProcessingStartTime: null,
+      aiProcessingEndTime: null,
+      processingDelaySeconds: null,
+      totalImagesReceived: 1,
+      bestImageIndex: 0,
+      imageUrl,
+      publicId,
+      thumbnailUrl,
+      totalDetections: 0,
+      gps: null,
+      temperature: tempValue != null ? String(tempValue) : null,
+      warnings: [],
+      images: [
+        {
+          imageUrl,
+          publicId,
+          thumbnailUrl,
+          captureTime,
+          processingTime: serverReceiptTime,
+          sequence: 0,
+          isBest: true,
+        },
+      ],
+      detections: [],
+      aggregatedDetections: [],
+      createdAt: new Date().toISOString(),
+    };
+
+    if (!process.env.BFF_STORE_URL) {
+      throw new Error('BFF_STORE_URL is not configured');
+    }
+
+    try {
+      log.info('Trial upload detected — sending directly to backend without AI or aggregation');
+      await axios.post(process.env.BFF_STORE_URL, trialPayload, {
+        timeout: 15000,
+        headers: { 'x-correlation-id': correlationId },
+      });
+      log.info(`Trial event stored to backend — trap: ${trapId}`);
+      return {
+        imageUrl,
+        correlationId,
+        detections: 0,
+        processingDelaySeconds: null,
+        timingFeedback: {
+          totalDelay: transferDurationMs ? Math.round(transferDurationMs / 1000) : null,
+          internetConnectedDelaySeconds: null,
+        },
+      };
+    } catch (postErr) {
+      log.error(`Trial event rejected by backend — HTTP ${postErr.response?.status || 'unknown'}: ${postErr.message}`);
+      throw postErr;
+    }
+  }
+
   // Step 3: AI inference with retry loop (retries AI only, not Cloudinary upload)
   let aiResponse = null;
   let aiError = null;
@@ -622,7 +702,7 @@ const processUploadImage = async ({ trapId, clientId: ctClientId, captureTime, t
       aiRequestSentAt: aiRequestSentAt || null,
       aiResponseReceivedAt: aiResponseReceivedAt || null,
     },
-  }, { flushImmediately: isTrialUpload });
+  }, { flushImmediately: false });
 
   const totalDelay = delays.totalDeviceToProcessing ?? Math.round((aiTimings?.durationMs || 0) / 1000);
   log.info(`Image processing complete — ${detections.length} detection(s), total delay: ${totalDelay}s`);
